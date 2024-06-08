@@ -1,0 +1,25 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000");
+
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+    "create_proof_of_non_fungibles"
+    Address("resource_sim1n23a2ddfca53e595rjkkpl06mdszfxzpxmmjrzjv9qd83yjjeq4w0g") #stab id resource address
+    Array<NonFungibleLocalId>(
+        NonFungibleLocalId("#1#")); #stabid fungible id
+
+POP_FROM_AUTH_ZONE
+    Proof("id_proof");
+
+CALL_METHOD    
+    Address("component_sim1crvqxka5xzny0eey9qtkwnj2cxm3xg76cfl68qk3kr2hdzr2r2ca96") #proxy comp address
+    "unstake_ilis"
+	Proof("id_proof")
+	Decimal("100");
+	
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

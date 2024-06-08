@@ -1,0 +1,28 @@
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd")
+    "create_proof_of_amount"
+    Address("{proxy_control_badge}")
+    Decimal("0.75");
+
+SET_METADATA
+    Address("{lpstab_address}")
+    "icon_url"
+    Enum<Metadata::Url>( # Single item
+        "https://ilikeitstable.com/images/lplogo.png"
+    );
+	
+SET_METADATA
+    Address("{lpstab_address}")
+    "symbol"
+    # "Metadata::String" is equivalent to 0u8
+    Enum<Metadata::String>(
+        "LPSTAB"
+    );
+	
+SET_METADATA
+    Address("{lpstab_address}")
+    "name"
+    # "Metadata::String" is equivalent to 0u8
+    Enum<Metadata::String>(
+        "STAB/XRD LP token"
+    );

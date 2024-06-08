@@ -1,0 +1,17 @@
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd")
+    "create_proof_of_amount"
+    Address("{proxy_control_badge}")
+    Decimal("0.75");
+
+CALL_METHOD
+	Address("{proxy_comp}")
+	"add_stakable"
+	Address("{ilis_address}")
+	Decimal("100000");
+	
+CALL_METHOD
+	Address("{proxy_comp}")
+	"add_stakable"
+	Address("{lpstab_address}")
+	Decimal("100000");

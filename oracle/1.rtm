@@ -1,0 +1,4 @@
+CALL_FUNCTION
+    Address("{oracle_package_address}")
+	"Oracle"
+    "instantiate_oracle";

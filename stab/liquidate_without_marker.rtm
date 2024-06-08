@@ -1,0 +1,29 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000");
+
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") #Primary account 
+    "withdraw"
+    Address("resource_sim1t5d406396cmx60t5g7cvsly8d8wfmagzyz0lyvzk06y0lvwct2rv4q") # stab address
+    Decimal("5");
+
+# Put the stab from worktop into stab_bucket
+TAKE_FROM_WORKTOP 
+    Address("resource_sim1t5d406396cmx60t5g7cvsly8d8wfmagzyz0lyvzk06y0lvwct2rv4q") # stab address
+    Decimal("5") 
+    Bucket("stab_bucket");
+
+CALL_METHOD    
+    Address("component_sim1cpwu4wc6rg0am8l9prnh2lzqkk6hue6stzqhdx48rzvek2mmm5vp0p")
+    "liquidate_position_without_marker"
+    Bucket("stab_bucket")
+    true
+    0i64
+    NonFungibleLocalId("#0#");
+
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

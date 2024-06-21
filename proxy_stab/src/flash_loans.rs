@@ -14,11 +14,11 @@ mod flash_loans {
 
     const STABILIS: Global<Stabilis> = global_component!(
         Stabilis,
-        "component_tdx_2_1cz29hzue8jmsqpe5scg5j44seepm0a4ekfqy6y7ld5v77ndp47jz85"
+        "component_tdx_2_1cp4j27fcr4e74g59euhje8wk4u4q0jq358jf8u4j4z7znfqnj6jx0q"
     );
 
     extern_blueprint! {
-        "package_tdx_2_1p5z2zrz0cnsk94eld0r34c76xhq9mya0ptpvllh6r4jfpj0djltmx9",
+        "package_tdx_2_1pkqn52t324ezshectwlwkzk0w8zqamyq6aqugkmq9q7zcvhshfq0s2",
         Stabilis {
             fn free_stab(&self, amount: Decimal) -> Bucket;
             fn burn_stab(&self, bucket: Bucket) -> ();
@@ -26,7 +26,7 @@ mod flash_loans {
     }
 
     struct FlashLoans {
-        controller_badge: FungibleVault,
+        badge_vault: FungibleVault,
         loan_receipt_manager: ResourceManager,
         interest_vault: Option<Vault>,
         loan_receipt_counter: u64,
@@ -74,13 +74,13 @@ mod flash_loans {
 
             //create the flash loan component
             Self {
-                controller_badge: FungibleVault::with_bucket(controller_badge.as_fungible()),
+                badge_vault: FungibleVault::with_bucket(controller_badge.as_fungible()),
                 loan_receipt_manager,
                 interest: dec!(0),
                 interest_vault: None,
                 stabilis: STABILIS,
                 loan_receipt_counter: 0,
-                enabled: false,
+                enabled: true,
             }
             .instantiate()
             .prepare_to_globalize(OwnerRole::Fixed(rule!(require(controller_address))))
@@ -106,7 +106,11 @@ mod flash_loans {
             );
             self.loan_receipt_counter += 1;
 
-            (self.stabilis.free_stab(amount), receipt)
+            let loan_bucket: Bucket = self
+                .badge_vault
+                .authorize_with_amount(dec!("0.75"), || self.stabilis.free_stab(amount));
+
+            (loan_bucket, receipt)
         }
 
         pub fn pay_back(&mut self, receipt_bucket: Bucket, mut payment: Bucket) -> Bucket {
@@ -120,12 +124,14 @@ mod flash_loans {
                 .get_non_fungible_data(&receipt_bucket.as_non_fungible().non_fungible_local_id());
 
             assert!(
-                payment.amount() > receipt.borrowed_amount * receipt.interest,
+                payment.amount() >= receipt.borrowed_amount * (dec!(1) + receipt.interest),
                 "Not enough STAB paid back."
             );
 
-            self.stabilis
-                .burn_stab(payment.take(receipt.borrowed_amount));
+            self.badge_vault.authorize_with_amount(dec!("0.75"), || {
+                self.stabilis
+                    .burn_stab(payment.take(receipt.borrowed_amount))
+            });
 
             if receipt.interest > dec!(0) {
                 if self.interest_vault.is_none() {
@@ -139,6 +145,8 @@ mod flash_loans {
                         .put(payment.take(receipt.interest * receipt.borrowed_amount));
                 }
             }
+
+            receipt_bucket.burn();
 
             payment
         }

@@ -22,6 +22,7 @@ mod proxy {
             flash_borrow => PUBLIC;
             flash_pay_back => PUBLIC;
             burn_marker => PUBLIC;
+            burn_loan_receipt => PUBLIC;
             force_mint => PUBLIC;
             force_liquidate => PUBLIC;
             receive_badges => PUBLIC;
@@ -45,7 +46,7 @@ mod proxy {
     }
 
     extern_blueprint! {
-        "package_tdx_2_1p5z2zrz0cnsk94eld0r34c76xhq9mya0ptpvllh6r4jfpj0djltmx9",
+        "package_tdx_2_1pkqn52t324ezshectwlwkzk0w8zqamyq6aqugkmq9q7zcvhshfq0s2",
         Stabilis {
             fn open_cdp(&mut self, collateral: Bucket, stab_to_mint: Decimal, safe: bool) -> (Bucket, Bucket);
             fn close_cdp(&mut self, receipt_proof: NonFungibleLocalId, stab_payment: Bucket) -> (Bucket, Bucket);
@@ -74,12 +75,13 @@ mod proxy {
             fn force_liquidate(&mut self, collateral: ResourceAddress, payment: Bucket, percentage_to_take: Decimal) -> (Bucket, Bucket);
             fn force_mint(&mut self, collateral: ResourceAddress, payment: Bucket, percentage_to_supply: Decimal) -> (Bucket, Option<Bucket>);
             fn burn_marker(&self, marker: Bucket);
+            fn burn_loan_receipt(&self, receipt: Bucket);
         }
     }
 
     const STABILIS: Global<Stabilis> = global_component!(
         Stabilis,
-        "component_tdx_2_1cz29hzue8jmsqpe5scg5j44seepm0a4ekfqy6y7ld5v77ndp47jz85"
+        "component_tdx_2_1cp4j27fcr4e74g59euhje8wk4u4q0jq358jf8u4j4z7znfqnj6jx0q"
     );
 
     struct Proxy {
@@ -165,7 +167,7 @@ mod proxy {
                 latest_stab_price_errors: KeyValueStore::new(),
                 latest_stab_price_errors_total: dec!(0),
                 number_of_cached_prices: 50,
-                last_changed_price: 1,
+                last_changed_price: 0,
                 full_cache: false,
                 internal_price,
                 interest_rate: dec!(1),
@@ -178,7 +180,7 @@ mod proxy {
                 max_interest_rate: dec!("1.0000007715"),
                 min_interest_rate: dec!("0.9999992287"),
                 allowed_deviation: dec!("0.005"),
-                max_price_error: dec!("10"),
+                max_price_error: dec!("0.5"),
                 price_error_offset: dec!(1),
                 accepted_collaterals: vec![XRD],
                 percentage_to_supply: dec!("1.05"),
@@ -200,15 +202,11 @@ mod proxy {
                 - self.last_update.seconds_since_unix_epoch)
                 / dec!(60);
 
-            if self.update_delay > 0 {
-                assert!(
-                    passed_minutes >= Decimal::from(self.update_delay),
-                    "Last update was recent enough."
-                );
-            }
-
-            self.update_internal_price();
             self.update_collateral_prices();
+
+            if passed_minutes >= Decimal::from(self.update_delay) {
+                self.update_internal_price();
+            }
         }
 
         ////////////////////////////////////////////////////////////////////
@@ -292,13 +290,13 @@ mod proxy {
                 - self.last_update.seconds_since_unix_epoch)
                 / dec!(60);
 
-                let to_change_id: u64 = match self.last_changed_price >= self.number_of_cached_prices {
-                    true => {
-                        self.full_cache = true;
-                        1
-                    },
-                    false => self.last_changed_price + 1,
-                };
+            let to_change_id: u64 = match self.last_changed_price >= self.number_of_cached_prices {
+                true => {
+                    self.full_cache = true;
+                    1
+                }
+                false => self.last_changed_price + 1,
+            };
 
             if !self.full_cache {
                 self.latest_stab_price_errors_total += price_error;
@@ -470,6 +468,11 @@ mod proxy {
                 .authorize_with_amount(dec!("0.75"), || self.stabilis.burn_marker(marker));
         }
 
+        pub fn burn_loan_receipt(&self, receipt: Bucket) {
+            self.badge_vault
+                .authorize_with_amount(dec!("0.75"), || self.stabilis.burn_loan_receipt(receipt));
+        }
+
         pub fn liquidate_position_with_marker(
             &mut self,
             marker_proof: NonFungibleProof,
@@ -555,11 +558,7 @@ mod proxy {
             });
         }
 
-        pub fn set_max_vector_length(
-            &mut self,
-            new_stabilis_length: u64,
-            new_own_length: u64,
-        ) {
+        pub fn set_max_vector_length(&mut self, new_stabilis_length: u64, new_own_length: u64) {
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis.set_max_vector_length(new_stabilis_length)
             });

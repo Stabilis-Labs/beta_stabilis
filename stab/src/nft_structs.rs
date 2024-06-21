@@ -36,6 +36,7 @@ pub struct LiquidationReceipt {
     pub percentage_received: Decimal,
     pub percentage_owed: Decimal,
     pub cdp_liquidated: NonFungibleLocalId,
+    pub date_liquidated: Instant,
 }
 
 #[derive(ScryptoSbor, PartialEq)]
@@ -65,7 +66,9 @@ pub struct CollateralInfo {
     pub initialized: bool,
     pub max_stab_share: Decimal,
     pub minted_stab: Decimal,
+    pub collateral_amount: Decimal,
     pub highest_cr: Decimal,
+    pub lowest_cr: Option<Decimal>,
 }
 
 #[derive(ScryptoSbor)]

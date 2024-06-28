@@ -9,9 +9,11 @@ mod proxy {
     enable_method_auth! {
         methods {
             open_cdp => PUBLIC;
+            borrow_more => PUBLIC;
             top_up_cdp => PUBLIC;
             remove_collateral => PUBLIC;
             close_cdp => PUBLIC;
+            partial_close_cdp => PUBLIC;
             retrieve_leftover_collateral => PUBLIC;
             save_cdp => PUBLIC;
             mark_for_liquidation => PUBLIC;
@@ -46,10 +48,12 @@ mod proxy {
     }
 
     extern_blueprint! {
-        "package_tdx_2_1pkqn52t324ezshectwlwkzk0w8zqamyq6aqugkmq9q7zcvhshfq0s2",
+        "package_tdx_2_1pkvqu0alcxrrmywng96tyshqs3622gy4dh0frrykrsrzv3qnspzzkz",
         Stabilis {
             fn open_cdp(&mut self, collateral: Bucket, stab_to_mint: Decimal, safe: bool) -> (Bucket, Bucket);
+            fn borrow_more(&mut self, receipt_proof: NonFungibleLocalId, amount: Decimal) -> Bucket;
             fn close_cdp(&mut self, receipt_proof: NonFungibleLocalId, stab_payment: Bucket) -> (Bucket, Bucket);
+            fn partial_close_cdp(&mut self, receipt_proof: NonFungibleLocalId, stab_payment: Bucket) -> Bucket;
             fn retrieve_leftover_collateral(&mut self, receipt_proof: NonFungibleLocalId) -> Bucket;
             fn top_up_cdp(&mut self, receipt_proof: NonFungibleLocalId, collateral: Bucket) -> ();
             fn save_cdp(&mut self, receipt_proof: NonFungibleLocalId, collateral: Bucket) -> ();
@@ -72,7 +76,7 @@ mod proxy {
             fn return_internal_price(&self) -> Decimal;
             fn remove_collateral(&mut self, receipt_proof: NonFungibleLocalId, amount: Decimal) -> Bucket;
             fn get_marker_manager(&self) -> ResourceManager;
-            fn force_liquidate(&mut self, collateral: ResourceAddress, payment: Bucket, percentage_to_take: Decimal) -> (Bucket, Bucket);
+            fn force_liquidate(&mut self, collateral: ResourceAddress, payment: Bucket, percentage_to_take: Decimal, assert_non_markable: bool) -> (Bucket, Bucket);
             fn force_mint(&mut self, collateral: ResourceAddress, payment: Bucket, percentage_to_supply: Decimal) -> (Bucket, Option<Bucket>);
             fn burn_marker(&self, marker: Bucket);
             fn burn_loan_receipt(&self, receipt: Bucket);
@@ -81,7 +85,7 @@ mod proxy {
 
     const STABILIS: Global<Stabilis> = global_component!(
         Stabilis,
-        "component_tdx_2_1cp4j27fcr4e74g59euhje8wk4u4q0jq358jf8u4j4z7znfqnj6jx0q"
+        "component_tdx_2_1cpktta3wywkjphzmfxe4fy5ssuedq8hpygml08c06kr8gk8rlkwm0t"
     );
 
     struct Proxy {
@@ -105,7 +109,6 @@ mod proxy {
         cdp_receipt_manager: ResourceManager,
         cdp_marker_manager: ResourceManager,
         xrd_price: Decimal,
-        max_vector_length: usize,
         max_interest_rate: Decimal,
         min_interest_rate: Decimal,
         allowed_deviation: Decimal,
@@ -176,7 +179,6 @@ mod proxy {
                 cdp_receipt_manager: ResourceManager::from_address(cdp_receipt_address),
                 cdp_marker_manager: ResourceManager::from_address(cdp_marker_address),
                 xrd_price: dec!("0.041"),
-                max_vector_length: 100usize,
                 max_interest_rate: dec!("1.0000007715"),
                 min_interest_rate: dec!("0.9999992287"),
                 allowed_deviation: dec!("0.005"),
@@ -371,6 +373,19 @@ mod proxy {
             })
         }
 
+        pub fn borrow_more(&mut self, receipt_proof: NonFungibleProof, amount: Decimal) -> Bucket {
+            let receipt_proof = receipt_proof.check_with_message(
+                self.cdp_receipt_manager.address(),
+                "Incorrect proof! Are you sure this loan is yours?",
+            );
+            let receipt = receipt_proof.non_fungible::<Cdp>();
+            let receipt_id: NonFungibleLocalId = receipt.local_id().clone();
+
+            self.badge_vault.authorize_with_amount(dec!("0.75"), || {
+                self.stabilis.borrow_more(receipt_id, amount)
+            })
+        }
+
         pub fn add_collateral(
             &mut self,
             address: ResourceAddress,
@@ -415,6 +430,23 @@ mod proxy {
 
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis.close_cdp(receipt_id, stab_payment)
+            })
+        }
+
+        pub fn partial_close_cdp(
+            &mut self,
+            receipt_proof: NonFungibleProof,
+            stab_payment: Bucket,
+        ) -> Bucket {
+            let receipt_proof = receipt_proof.check_with_message(
+                self.cdp_receipt_manager.address(),
+                "Incorrect proof! Are you sure this loan is yours?",
+            );
+            let receipt = receipt_proof.non_fungible::<Cdp>();
+            let receipt_id: NonFungibleLocalId = receipt.local_id().clone();
+
+            self.badge_vault.authorize_with_amount(dec!("0.75"), || {
+                self.stabilis.partial_close_cdp(receipt_id, stab_payment)
             })
         }
 
@@ -498,7 +530,7 @@ mod proxy {
         ) -> (Bucket, Bucket) {
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis
-                    .force_liquidate(collateral, payment, self.percentage_to_take)
+                    .force_liquidate(collateral, payment, self.percentage_to_take, true)
             })
         }
 
@@ -558,11 +590,10 @@ mod proxy {
             });
         }
 
-        pub fn set_max_vector_length(&mut self, new_stabilis_length: u64, new_own_length: u64) {
+        pub fn set_max_vector_length(&mut self, new_stabilis_length: u64) {
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis.set_max_vector_length(new_stabilis_length)
             });
-            self.max_vector_length = new_own_length.to_usize().unwrap();
         }
 
         pub fn get_internal_price(&self) -> Decimal {

@@ -68,7 +68,6 @@ pub struct CollateralInfo {
     pub minted_stab: Decimal,
     pub collateral_amount: Decimal,
     pub highest_cr: Decimal,
-    pub lowest_cr: Option<Decimal>,
 }
 
 #[derive(ScryptoSbor)]

@@ -36,6 +36,8 @@ mod stabilis {
             burn_stab => restrict_to: [OWNER];
             burn_marker => restrict_to: [OWNER];
             burn_loan_receipt => restrict_to: [OWNER];
+            borrow_more => restrict_to: [OWNER];
+            partial_close_cdp => restrict_to: [OWNER];
         }
     }
     struct Stabilis {
@@ -64,7 +66,7 @@ mod stabilis {
             //set protocol parameters
             let parameters = ProtocolParameters {
                 minimum_mint: dec!(1),
-                max_vector_length: 100,
+                max_vector_length: 250,
                 liquidation_delay: 5,
                 unmarked_delay: 5,
                 liquidation_liquidation_fine: dec!("0.10"),
@@ -512,6 +514,11 @@ mod stabilis {
                 receipt_data.collateral_amount,
             );
 
+            self.collaterals
+                .get_mut(&receipt_data.parent_address)
+                .unwrap()
+                .collateral_amount -= receipt_data.collateral_stab_ratio * receipt_data.minted_stab;
+
             //Update circulating STAB, both for total and chosen collateral
             self.update_minted_stab(
                 false,
@@ -535,6 +542,9 @@ mod stabilis {
             //Update the Cdp receipt
             self.cdp_manager
                 .update_non_fungible_data(&receipt_id, "status", CdpStatus::Closed);
+
+            self.cdp_manager
+                .update_non_fungible_data(&receipt_id, "collateral_amount", dec!(0));
 
             //return the collateral and the leftover STAB
             (collateral, stab_payment)
@@ -726,6 +736,11 @@ mod stabilis {
             let new_stab_amount = receipt_data.minted_stab - repayment.amount();
 
             assert!(
+                new_stab_amount >= self.parameters.minimum_mint,
+                "Resulting borrowed STAB needs to be above minimum mint."
+            );
+
+            assert!(
                 receipt_data.status == CdpStatus::Healthy,
                 "Loan not healthy. Save it first."
             );
@@ -764,7 +779,7 @@ mod stabilis {
                     .get_mut(&receipt_data.parent_address)
                     .unwrap()
                     .liquidation_collateral_ratio,
-                "Removal would put the CR below MCR."
+                "Action would put the CR below MCR."
             );
 
             //Update the Cdp receipt
@@ -955,16 +970,6 @@ mod stabilis {
                 return_receipt = marker_receipt_success.into();
             }
 
-            let next_cr_option = self
-                .collateral_ratios
-                .get_mut(&collateral)
-                .unwrap()
-                .range(dec!(0)..)
-                .next()
-                .map(|(next_cr, _)| Some(next_cr))
-                .unwrap_or(None);
-            self.collaterals.get_mut(&collateral).unwrap().lowest_cr = next_cr_option;
-
             return_receipt
         }
 
@@ -973,6 +978,7 @@ mod stabilis {
             collateral: ResourceAddress,
             mut payment: Bucket,
             percentage_to_take: Decimal,
+            assert_non_markable: bool,
         ) -> (Bucket, Bucket) {
             assert!(
                 !self.parameters.stop_force_liquidate,
@@ -1009,13 +1015,24 @@ mod stabilis {
                 data.is_pool_unit_collateral,
             ) / data.minted_stab;
 
+            //get liquidation collateral ratio
+            let lcr: Decimal = self
+                .collaterals
+                .get(&collateral)
+                .unwrap()
+                .liquidation_collateral_ratio;
+
+            //assert that the collateral ratio is high enough to force liquidate:
+            //if cr < lcr the loan doesn't have to be forced, but can be liquidated via normal means.
+            if assert_non_markable {
+                assert!(
+                    cr > lcr,
+                    "CR is too low. Liquidate this loan via the normal procedure."
+                );
+            }
+
             //calculate percentage of collateral value vs. minted stab
-            let cr_percentage: Decimal = self.collaterals.get(&collateral).unwrap().mcr * cr
-                / self
-                    .collaterals
-                    .get(&collateral)
-                    .unwrap()
-                    .liquidation_collateral_ratio;
+            let cr_percentage: Decimal = self.collaterals.get(&collateral).unwrap().mcr * cr / lcr;
 
             //calculate how much of the loan can be liquidated, how much of the payment should be taken, and what the leftover stab debt will then be
             let (percentage_to_liquidate, payment_amount, new_stab_amount): (
@@ -1302,17 +1319,24 @@ mod stabilis {
             //Finding the next to-be liquidated CDP, skipping over the amount of CDPs specified by the skip parameter
             let mut collateral_id: NonFungibleLocalId = cdp_id;
             let mut skip_counter: i64 = 0;
+            let mut found: bool = false;
 
             if automatic {
                 for (_identifier, found_collateral_id) in self.marked_cdps.range(dec!(0)..) {
                     collateral_id = found_collateral_id.clone();
                     skip_counter += 1;
                     if (skip_counter - 1) == skip {
+                        found = true;
                         break;
                     }
                 }
                 if skip_counter == 0 {
                     panic!("No loans available to liquidate.");
+                } else if !found {
+                    panic!(
+                        "Too many skipped. Skip a maximum of {} loans.",
+                        skip_counter - 1
+                    );
                 }
             }
 
@@ -1366,7 +1390,6 @@ mod stabilis {
                 minted_stab: dec!(0),
                 collateral_amount: dec!(0),
                 highest_cr: dec!(0),
-                lowest_cr: None,
             };
 
             self.collaterals.insert(address, info);
@@ -1849,8 +1872,6 @@ mod stabilis {
                     .get_mut(&parent_address)
                     .unwrap()
                     .highest_cr = cr;
-            } else if self.collaterals.get(&parent_address).unwrap().lowest_cr > cr {
-                self.collaterals.get_mut(&parent_address).unwrap().lowest_cr = Some(cr);
             }
         }
 

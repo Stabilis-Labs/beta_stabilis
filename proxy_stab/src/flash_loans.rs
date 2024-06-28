@@ -14,11 +14,11 @@ mod flash_loans {
 
     const STABILIS: Global<Stabilis> = global_component!(
         Stabilis,
-        "component_tdx_2_1cp4j27fcr4e74g59euhje8wk4u4q0jq358jf8u4j4z7znfqnj6jx0q"
+        "component_tdx_2_1cpktta3wywkjphzmfxe4fy5ssuedq8hpygml08c06kr8gk8rlkwm0t"
     );
 
     extern_blueprint! {
-        "package_tdx_2_1pkqn52t324ezshectwlwkzk0w8zqamyq6aqugkmq9q7zcvhshfq0s2",
+        "package_tdx_2_1pkvqu0alcxrrmywng96tyshqs3622gy4dh0frrykrsrzv3qnspzzkz",
         Stabilis {
             fn free_stab(&self, amount: Decimal) -> Bucket;
             fn burn_stab(&self, bucket: Bucket) -> ();
@@ -33,6 +33,7 @@ mod flash_loans {
         interest: Decimal,
         stabilis: Global<Stabilis>,
         enabled: bool,
+        amount_loaned: Decimal,
     }
 
     impl FlashLoans {
@@ -81,6 +82,7 @@ mod flash_loans {
                 stabilis: STABILIS,
                 loan_receipt_counter: 0,
                 enabled: true,
+                amount_loaned: dec!(0),
             }
             .instantiate()
             .prepare_to_globalize(OwnerRole::Fixed(rule!(require(controller_address))))
@@ -95,6 +97,7 @@ mod flash_loans {
 
         pub fn borrow(&mut self, amount: Decimal) -> (Bucket, Bucket) {
             assert!(self.enabled, "Flash loans are disabled.");
+            self.amount_loaned += amount;
             let loan_receipt = LoanReceipt {
                 borrowed_amount: amount,
                 interest: self.interest,

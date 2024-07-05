@@ -28,6 +28,7 @@ mod bootstrap {
         initial_little_address: ResourceAddress,
         lp_vault: Vault,
         reclaimable_resource: Vault,
+        bootstrap_badge_vault: Vault,
     }
 
     impl LinearBootstrapPool {
@@ -46,9 +47,27 @@ mod bootstrap {
             let global_component_caller_badge =
                 NonFungibleGlobalId::global_caller_badge(component_address);
 
+            let mut bootstrap_badge: Bucket = ResourceBuilder::new_fungible(OwnerRole::None)
+                .divisibility(DIVISIBILITY_MAXIMUM)
+                .metadata(metadata! (
+                    init {
+                        "name" => "bootstrap badge", locked;
+                        "symbol" => "BOOT", locked;
+                    }
+                ))
+                .mint_roles(mint_roles!(
+                    minter => rule!(require(global_caller(component_address)));
+                    minter_updater => rule!(deny_all);
+                ))
+                .mint_initial_supply(2)
+                .into();
+
             let mut pool_component = Blueprint::<TwoResourcePool>::instantiate(
                 OwnerRole::Fixed(rule!(require(global_component_caller_badge.clone()))),
-                rule!(require(global_component_caller_badge)),
+                rule!(
+                    require(global_component_caller_badge)
+                        || require_amount(dec!("2"), bootstrap_badge.resource_address())
+                ),
                 (resource1.resource_address(), resource2.resource_address()),
                 None,
             );
@@ -63,29 +82,8 @@ mod bootstrap {
                     (resource1.amount(), resource1_address)
                 };
 
-            let (lp_bucket, little_idiot_bucket): (Bucket, Option<Bucket>) =
-                pool_component.contribute((resource1, resource2));
-            let rm: ResourceManager = ResourceManager::from(lp_bucket.resource_address());
-            rm.set_metadata("symbol".to_owned(), "LPBOOT".to_owned());
-            rm.set_metadata(
-                "name".to_owned(),
-                "Liquidity Bootstrap Pool Token".to_owned(),
-            );
-
-            let bootstrap_badge: Bucket = ResourceBuilder::new_fungible(OwnerRole::None)
-                .divisibility(DIVISIBILITY_MAXIMUM)
-                .metadata(metadata! (
-                    init {
-                        "name" => "bootstrap badge", locked;
-                        "symbol" => "BOOT", locked;
-                    }
-                ))
-                .mint_roles(mint_roles!(
-                    minter => rule!(require(global_caller(component_address)));
-                    minter_updater => rule!(deny_all);
-                ))
-                .mint_initial_supply(1)
-                .into();
+            let (lp_bucket, little_idiot_bucket): (Bucket, Option<Bucket>) = bootstrap_badge
+                .authorize_with_all(|| pool_component.contribute((resource1, resource2)));
 
             let component = Self {
                 pool_component,
@@ -104,6 +102,7 @@ mod bootstrap {
                 initial_little_amount,
                 lp_vault: Vault::with_bucket(lp_bucket),
                 reclaimable_resource: Vault::new(initial_little_address),
+                bootstrap_badge_vault: Vault::with_bucket(bootstrap_badge.take(1)),
             }
             .instantiate()
             .prepare_to_globalize(OwnerRole::Fixed(rule!(require(

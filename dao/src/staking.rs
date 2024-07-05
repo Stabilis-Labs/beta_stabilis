@@ -124,6 +124,8 @@ mod staking {
             let (address_reservation, component_address) =
                 Runtime::allocate_component_address(Staking::blueprint_id());
 
+            let mother_token_address: ResourceAddress = rewards.resource_address();
+
             let mother_token_rep_manager: ResourceManager = ResourceBuilder::new_fungible(OwnerRole::None)
             .divisibility(DIVISIBILITY_MAXIMUM)
             .metadata(metadata! (
@@ -147,7 +149,7 @@ mod staking {
             ))
             .create_with_no_initial_supply();
 
-            let mother_pool = Blueprint::<OneResourcePool>::instantiate(
+            let mother_pool: Global<OneResourcePool> = Blueprint::<OneResourcePool>::instantiate(
                 OwnerRole::Fixed(rule!(require(controller))),
                 rule!(require(global_caller(component_address))),
                 mother_token_rep_manager.address(),
@@ -175,10 +177,6 @@ mod staking {
             .burn_roles(burn_roles!(
                 burner => rule!(deny_all);
                 burner_updater => rule!(deny_all);
-            ))
-            .withdraw_roles(withdraw_roles!(
-                withdrawer => rule!(deny_all);
-                withdrawer_updater => rule!(deny_all);
             ))
             .non_fungible_data_update_roles(non_fungible_data_update_roles!(
                 non_fungible_data_updater => rule!(require(global_caller(component_address))
@@ -252,13 +250,13 @@ mod staking {
                 unstake_receipt_manager,
                 unstake_receipt_counter: 0,
                 id_counter: 0,
-                reward_vault: FungibleVault::with_bucket(rewards.as_fungible()),
+                reward_vault: FungibleVault::with_bucket(rewards),
                 stakes: HashMap::new(),
                 dao_controlled,
                 mother_token_rep_manager,
                 mother_pool,
-                unstaked_mother_tokens: Vault::new(rewards.resource_address()),
-                staked_mother_tokens: Vault::new(rewards.resource_address()),
+                unstaked_mother_tokens: Vault::new(mother_token_address),
+                staked_mother_tokens: Vault::new(mother_token_address),
                 mother_token_reward: None,
                 last_update: Clock::current_time_rounded_to_minutes(),
             }

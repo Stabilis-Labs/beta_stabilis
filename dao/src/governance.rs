@@ -40,11 +40,7 @@ mod governance {
         proposal_receipt_manager: ResourceManager,
         vaults: KeyValueStore<ResourceAddress, Vault>,
         payments: KeyValueStore<ComponentAddress, Decimal>,
-        incomplete_proposals: KeyValueStore<u64, Proposal>,
-        ongoing_proposals: KeyValueStore<u64, Proposal>,
-        rejected_proposals: KeyValueStore<u64, Proposal>,
-        accepted_proposals: KeyValueStore<u64, Proposal>,
-        finished_proposals: KeyValueStore<u64, Proposal>,
+        proposals: KeyValueStore<u64, Proposal>,
         text_announcements: KeyValueStore<u64, String>,
         text_announcement_counter: u64,
         proposal_counter: u64,
@@ -61,6 +57,8 @@ mod governance {
     impl Governance {
         pub fn instantiate_dao(
             founder_allocation: Decimal,
+            bootstrap_allocation: Decimal,
+            staking_allocation: Decimal,
             controller_badge: Bucket,
             proxy_component: ComponentAddress,
             protocol_name: String,
@@ -69,7 +67,6 @@ mod governance {
             protocol_token_icon_url: Url,
             proposal_receipt_icon_url: Url,
             bootstrap_resource1: Bucket,
-            bootstrap_resource2: Bucket,
         ) -> (Global<Governance>, Bucket, Option<Bucket>, Bucket) {
             let (address_reservation, component_address) =
                 Runtime::allocate_component_address(Governance::blueprint_id());
@@ -79,22 +76,22 @@ mod governance {
                     dec!("0.75"),
                     controller_badge.resource_address()
                 ))),
-                rule!(require_amount(
-                    dec!("0.75"),
-                    controller_badge.resource_address()
-                )),
-                rule!(require_amount(
-                    dec!("0.75"),
-                    controller_badge.resource_address()
-                )),
-                rule!(require_amount(
-                    dec!("0.75"),
-                    controller_badge.resource_address()
-                )),
-                rule!(require_amount(
-                    dec!("0.75"),
-                    controller_badge.resource_address()
-                )),
+                rule!(
+                    require_amount(dec!("0.75"), controller_badge.resource_address())
+                        || require(global_caller(component_address))
+                ),
+                rule!(
+                    require_amount(dec!("0.75"), controller_badge.resource_address())
+                        || require(global_caller(component_address))
+                ),
+                rule!(
+                    require_amount(dec!("0.75"), controller_badge.resource_address())
+                        || require(global_caller(component_address))
+                ),
+                rule!(
+                    require_amount(dec!("0.75"), controller_badge.resource_address())
+                        || require(global_caller(component_address))
+                ),
                 None,
             );
 
@@ -125,6 +122,12 @@ mod governance {
             .into();
 
             let mother_token_address: ResourceAddress = mother_token_bucket.resource_address();
+            let founder_allocation_amount: Decimal =
+                founder_allocation * mother_token_bucket.amount();
+            let staking_allocation_amount: Decimal =
+                staking_allocation * mother_token_bucket.amount();
+            let bootstrap_allocation_amount: Decimal =
+                bootstrap_allocation * mother_token_bucket.amount();
 
             let proposal_receipt_manager = ResourceBuilder::new_integer_non_fungible::<
                 ProposalReceipt,
@@ -160,23 +163,13 @@ mod governance {
             ))
             .create_with_no_initial_supply();
 
-            let (staking, voting_id_address): (Global<Staking>, ResourceAddress) = Staking::new(
-                controller_badge.resource_address(),
-                mother_token_bucket.take(dec!(10_000_000)).as_fungible(),
-                1,
-                protocol_name,
-                protocol_token_symbol,
-                true,
-                31,
-            );
-
-            let (bootstrap, no_bucket, bootstrap_badge): (
+            let (bootstrap, non_bucket, bootstrap_badge): (
                 Global<LinearBootstrapPool>,
                 Option<Bucket>,
                 Bucket,
             ) = LinearBootstrapPool::new(
                 bootstrap_resource1,
-                bootstrap_resource2,
+                mother_token_bucket.take(bootstrap_allocation_amount),
                 dec!("0.99"),
                 dec!("0.01"),
                 dec!("0.5"),
@@ -185,13 +178,25 @@ mod governance {
                 7,
             );
 
+            let (staking, voting_id_address): (Global<Staking>, ResourceAddress) = Staking::new(
+                controller_badge.resource_address(),
+                mother_token_bucket
+                    .take(staking_allocation_amount)
+                    .as_fungible(),
+                1,
+                protocol_name,
+                protocol_token_symbol,
+                true,
+                31,
+            );
+
             controller_badge.authorize_with_all(|| {
                 staking.add_stakable(
                     mother_token_address, //stakable resource
                     dec!(0),              //reward amount
                     dec!("1.0005"),       //lock payment
                     365,                  //max lock duration
-                    dec!(4),              //unlock multiplier
+                    dec!(3),              //unlock multiplier
                 );
             });
 
@@ -211,12 +216,12 @@ mod governance {
                 Vault::with_bucket(controller_badge),
             );
 
+            let founder_allocation_bucket: Bucket =
+                mother_token_bucket.take(founder_allocation_amount);
+
             vaults.insert(
                 mother_token_address,
-                Vault::with_bucket(
-                    mother_token_bucket
-                        .take(mother_token_bucket.amount() * (dec!(1) - founder_allocation)),
-                ),
+                Vault::with_bucket(mother_token_bucket),
             );
 
             let dao = Self {
@@ -228,11 +233,7 @@ mod governance {
                 vaults,
                 proposal_receipt_manager,
                 payments: KeyValueStore::new(),
-                incomplete_proposals: KeyValueStore::new(),
-                ongoing_proposals: KeyValueStore::new(),
-                rejected_proposals: KeyValueStore::new(),
-                accepted_proposals: KeyValueStore::new(),
-                finished_proposals: KeyValueStore::new(),
+                proposals: KeyValueStore::new(),
                 text_announcements: KeyValueStore::new(),
                 text_announcement_counter: 0,
                 proposal_counter: 0,
@@ -249,7 +250,7 @@ mod governance {
             .with_address(address_reservation)
             .globalize();
 
-            (dao, mother_token_bucket, no_bucket, bootstrap_badge)
+            (dao, founder_allocation_bucket, non_bucket, bootstrap_badge)
         }
 
         pub fn finish_bootstrap(&mut self) {
@@ -316,6 +317,11 @@ mod governance {
                     .take(amount)
                     .into();
 
+                ////////////////////////////////////////////
+                /// //////////////////////////////////////
+                /// //////////////////////////////////////////
+                /// ORPHANED NODE HERE
+                /// ///////////////////////////////////////
                 let staking_id: Bucket = self.staking.stake(payment, None).unwrap();
 
                 if lock_duration > 0 {
@@ -518,8 +524,7 @@ mod governance {
                     proposal_receipt,
                 );
 
-            self.incomplete_proposals
-                .insert(self.proposal_counter, proposal);
+            self.proposals.insert(self.proposal_counter, proposal);
             self.proposal_counter += 1;
 
             (payment, incomplete_proposal_receipt)
@@ -546,7 +551,7 @@ mod governance {
             );
 
             let proposal_id: u64 = receipt.proposal_id;
-            let mut proposal = self.incomplete_proposals.get_mut(&proposal_id).unwrap();
+            let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
 
             let step = ProposalStep {
                 component,
@@ -572,7 +577,7 @@ mod governance {
             );
 
             let proposal_id: u64 = receipt.proposal_id;
-            let mut proposal = self.incomplete_proposals.remove(&proposal_id).unwrap();
+            let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
 
             proposal.status = ProposalStatus::Ongoing;
             proposal.deadline = Clock::current_time_rounded_to_minutes()
@@ -584,8 +589,6 @@ mod governance {
                 "status",
                 proposal.status,
             );
-
-            self.ongoing_proposals.insert(proposal_id, proposal);
         }
 
         pub fn vote_on_proposal(
@@ -594,7 +597,7 @@ mod governance {
             for_against: bool,
             voting_id_proof: NonFungibleProof,
         ) {
-            let mut proposal = self.ongoing_proposals.get_mut(&proposal_id).unwrap();
+            let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
 
             let id_proof = voting_id_proof
                 .check_with_message(self.voting_id_address, "Invalid staking ID supplied!");
@@ -607,6 +610,11 @@ mod governance {
             assert!(
                 proposal.votes.get(&id).is_none(),
                 "Already voted on this proposal!"
+            );
+
+            assert!(
+                proposal.status == ProposalStatus::Ongoing,
+                "Proposal not ongoing!"
             );
 
             let vote_power: Decimal = self
@@ -629,80 +637,94 @@ mod governance {
         }
 
         pub fn finish_voting(&mut self, proposal_id: u64) {
-            let mut proposal = self.ongoing_proposals.remove(&proposal_id).unwrap();
-            let fee_paid: Decimal = self
-                .proposal_receipt_manager
-                .get_non_fungible_data::<ProposalReceipt>(&NonFungibleLocalId::integer(proposal_id))
-                .fee_paid;
+            let mut accepted: bool = true;
 
-            assert!(
-                Clock::current_time_is_at_or_after(proposal.deadline, TimePrecision::Minute),
-                "Voting period has not passed!"
-            );
+            {
+                let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
+                assert!(
+                    proposal.status == ProposalStatus::Ongoing,
+                    "Proposal not ongoing!"
+                );
 
-            let mut decision: ProposalStatus = ProposalStatus::Accepted;
-            let total_votes = proposal.votes_for + proposal.votes_against;
+                assert!(
+                    Clock::current_time_is_at_or_after(proposal.deadline, TimePrecision::Minute),
+                    "Voting period has not passed!"
+                );
 
-            if total_votes < self.parameters.quorum {
-                proposal.status = ProposalStatus::Rejected;
-                self.rejected_proposals.insert(proposal_id, proposal);
-                decision = ProposalStatus::Rejected;
-            } else if proposal.votes_for > self.parameters.approval_threshold * total_votes {
-                proposal.status = ProposalStatus::Accepted;
-                self.accepted_proposals.insert(proposal_id, proposal);
-            } else {
-                proposal.status = ProposalStatus::Rejected;
-                self.rejected_proposals.insert(proposal_id, proposal);
-                decision = ProposalStatus::Rejected;
+                let total_votes = proposal.votes_for + proposal.votes_against;
+
+                if (proposal.votes_for > self.parameters.approval_threshold * total_votes)
+                    && (total_votes > self.parameters.quorum)
+                {
+                    proposal.status = ProposalStatus::Accepted;
+                } else {
+                    proposal.status = ProposalStatus::Rejected;
+                    accepted = false;
+                }
+
+                self.proposal_receipt_manager.update_non_fungible_data(
+                    &NonFungibleLocalId::integer(proposal_id),
+                    "status",
+                    proposal.status,
+                );
             }
-            self.proposal_receipt_manager.update_non_fungible_data(
-                &NonFungibleLocalId::integer(proposal_id),
-                "status",
-                decision,
-            );
-
-            if decision == ProposalStatus::Rejected {
+            if accepted == true {
+                let fee_paid: Decimal = self
+                    .proposal_receipt_manager
+                    .get_non_fungible_data::<ProposalReceipt>(&NonFungibleLocalId::integer(
+                        proposal_id,
+                    ))
+                    .fee_paid;
                 let fee_tokens: Bucket = self.proposal_fee_vault.take(fee_paid);
                 self.put_tokens(fee_tokens);
             }
         }
 
         pub fn execute_proposal_step(&mut self, proposal_id: u64, steps_to_execute: i64) {
-            let mut proposal = self.accepted_proposals.remove(&proposal_id).unwrap();
+            let mut buckets: Vec<Bucket> = Vec::new();
+            {
+                let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
+                assert!(
+                    proposal.status == ProposalStatus::Accepted,
+                    "Proposal not accepted!"
+                );
 
-            for _ in 0..steps_to_execute {
-                let step: &ProposalStep = &proposal.steps[proposal.next_index as usize];
-                let component: Global<AnyComponent> = Global::from(step.component);
-                let badge_vault: FungibleVault =
-                    self.vaults.get_mut(&step.badge).unwrap().as_fungible();
+                for _ in 0..steps_to_execute {
+                    let step: &ProposalStep = &proposal.steps[proposal.next_index as usize];
+                    let component: Global<AnyComponent> = Global::from(step.component);
+                    let badge_vault: FungibleVault =
+                        self.vaults.get_mut(&step.badge).unwrap().as_fungible();
 
-                if step.return_bucket {
-                    let bucket: Bucket = badge_vault.authorize_with_amount(dec!("0.75"), || {
-                        component.call::<ScryptoValue, Bucket>(&step.method, &step.args)
-                    });
-                    self.put_tokens(bucket);
-                } else {
-                    badge_vault.authorize_with_amount(dec!("0.75"), || {
-                        component.call::<ScryptoValue, ()>(&step.method, &step.args)
-                    });
+                    if step.return_bucket {
+                        let bucket: Bucket = badge_vault
+                            .authorize_with_amount(dec!("0.75"), || {
+                                component.call::<ScryptoValue, Bucket>(&step.method, &step.args)
+                            });
+                        buckets.push(bucket);
+                    } else {
+                        badge_vault.authorize_with_amount(dec!("0.75"), || {
+                            component.call::<ScryptoValue, ()>(&step.method, &step.args)
+                        });
+                    }
+
+                    proposal.next_index += 1;
+
+                    if proposal.next_index as usize == proposal.steps.len() {
+                        break;
+                    }
                 }
-
-                proposal.next_index += 1;
-
                 if proposal.next_index as usize == proposal.steps.len() {
-                    break;
+                    proposal.status = ProposalStatus::Executed;
+                    self.proposal_receipt_manager.update_non_fungible_data(
+                        &NonFungibleLocalId::integer(proposal_id),
+                        "status",
+                        proposal.status,
+                    );
                 }
             }
-            if proposal.next_index as usize == proposal.steps.len() {
-                proposal.status = ProposalStatus::Executed;
-                self.finished_proposals.insert(proposal_id, proposal);
-                self.proposal_receipt_manager.update_non_fungible_data(
-                    &NonFungibleLocalId::integer(proposal_id),
-                    "status",
-                    ProposalStatus::Executed,
-                );
-            } else {
-                self.accepted_proposals.insert(proposal_id, proposal);
+
+            for bucket in buckets {
+                self.put_tokens(bucket);
             }
         }
 

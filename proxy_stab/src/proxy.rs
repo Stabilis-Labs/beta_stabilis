@@ -48,16 +48,16 @@ mod proxy {
     }
 
     extern_blueprint! {
-        "package_tdx_2_1pkvqu0alcxrrmywng96tyshqs3622gy4dh0frrykrsrzv3qnspzzkz",
+        "package_tdx_2_1pkla7lxsrjy86ygsa2wl77rgpau497h9kljs94pekfylr6lwlg6e9e",
         Stabilis {
             fn open_cdp(&mut self, collateral: Bucket, stab_to_mint: Decimal, safe: bool) -> (Bucket, Bucket);
             fn borrow_more(&mut self, receipt_proof: NonFungibleLocalId, amount: Decimal) -> Bucket;
             fn close_cdp(&mut self, receipt_proof: NonFungibleLocalId, stab_payment: Bucket) -> (Bucket, Bucket);
-            fn partial_close_cdp(&mut self, receipt_proof: NonFungibleLocalId, stab_payment: Bucket) -> Bucket;
+            fn partial_close_cdp(&mut self, receipt_proof: NonFungibleLocalId, stab_payment: Bucket)  -> ();
             fn retrieve_leftover_collateral(&mut self, receipt_proof: NonFungibleLocalId) -> Bucket;
             fn top_up_cdp(&mut self, receipt_proof: NonFungibleLocalId, collateral: Bucket) -> ();
             fn save_cdp(&mut self, receipt_proof: NonFungibleLocalId, collateral: Bucket) -> ();
-            fn mark_for_liquidation(&mut self, collateral: ResourceAddress) -> NonFungibleBucket;
+            fn mark_for_liquidation(&mut self, collateral: ResourceAddress) -> Bucket;
             fn liquidate_position_with_marker(&mut self, marker_receipt: NonFungibleLocalId, payment: Bucket) -> (Bucket, Option<Bucket>, Bucket);
             fn liquidate_position_without_marker(&mut self, payment: Bucket, automatic: bool, skip: i64, cdp_id: NonFungibleLocalId) -> (Bucket, Option<Bucket>, Bucket);
             fn change_collateral_price(&self, collateral: ResourceAddress, new_price: Decimal) -> ();
@@ -65,7 +65,6 @@ mod proxy {
             fn add_pool_collateral(&self, address: ResourceAddress, parent_address: ResourceAddress, validator: ComponentAddress, lsu: bool, initial_acceptance: bool) -> ();
             fn change_internal_price(&mut self, new_price: Decimal) -> ();
             fn empty_collateral_treasury(&mut self, amount: Decimal, collateral: ResourceAddress, error_fallback: bool) -> Bucket;
-            fn mint_controller_badge(&self, amount: Decimal) -> Bucket;
             fn edit_collateral(&mut self, address: ResourceAddress, new_mcr: Decimal, new_acceptance: bool, new_max_share: Decimal) -> ();
             fn edit_pool_collateral(&mut self, address: ResourceAddress, new_acceptance: bool, new_max_share: Decimal) -> ();
             fn set_liquidation_delay(&mut self, new_delay: i64) -> ();
@@ -85,7 +84,7 @@ mod proxy {
 
     const STABILIS: Global<Stabilis> = global_component!(
         Stabilis,
-        "component_tdx_2_1cpktta3wywkjphzmfxe4fy5ssuedq8hpygml08c06kr8gk8rlkwm0t"
+        "component_tdx_2_1czdep00tnsy9js8atnc6u3v472nxgjmk5j6prtzfw56ttz9fdk9a8n"
     );
 
     struct Proxy {
@@ -433,11 +432,7 @@ mod proxy {
             })
         }
 
-        pub fn partial_close_cdp(
-            &mut self,
-            receipt_proof: NonFungibleProof,
-            stab_payment: Bucket,
-        ) -> Bucket {
+        pub fn partial_close_cdp(&mut self, receipt_proof: NonFungibleProof, stab_payment: Bucket) {
             let receipt_proof = receipt_proof.check_with_message(
                 self.cdp_receipt_manager.address(),
                 "Incorrect proof! Are you sure this loan is yours?",
@@ -447,7 +442,7 @@ mod proxy {
 
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis.partial_close_cdp(receipt_id, stab_payment)
-            })
+            });
         }
 
         pub fn retrieve_leftover_collateral(&mut self, receipt_proof: NonFungibleProof) -> Bucket {
@@ -489,7 +484,7 @@ mod proxy {
             });
         }
 
-        pub fn mark_for_liquidation(&mut self, collateral: ResourceAddress) -> NonFungibleBucket {
+        pub fn mark_for_liquidation(&mut self, collateral: ResourceAddress) -> Bucket {
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis.mark_for_liquidation(collateral)
             })

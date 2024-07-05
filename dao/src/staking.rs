@@ -33,12 +33,14 @@ mod staking {
             update_id => PUBLIC;
             update_period => PUBLIC;
             lock_stake => PUBLIC;
-            set_lock => restrict_to: [OWNER];
+            unlock_stake => PUBLIC;
+            vote => restrict_to: [OWNER];
+            set_mother_token_reward => restrict_to: [OWNER];
             set_period_interval => restrict_to: [OWNER];
             set_rewards => restrict_to: [OWNER];
             set_max_claim_delay => restrict_to: [OWNER];
-            fill_rewards => restrict_to: [OWNER];
-            remove_rewards => restrict_to: [OWNER];
+            put_tokens => restrict_to: [OWNER];
+            remove_tokens => restrict_to: [OWNER];
             add_stakable => restrict_to: [OWNER];
             edit_stakable => restrict_to: [OWNER];
             set_next_period_to_now => restrict_to: [OWNER];
@@ -76,9 +78,21 @@ mod staking {
         // keyvaluestore, holding stakable units and their data
         stakes: HashMap<ResourceAddress, StakableUnit>,
         // whether a DAO is controlling the staking
-        // If a centralized entity controls the controller badge, using the set_lock method, they could lock the someone's tokens by telling the system someone is voting.
+        // If a centralized entity controls the controller badge, using the vote method, they could lock the someone's tokens by telling the system someone is voting.
         // To prevent this, this functionality only enabled if dao_controlled is set to true.
         dao_controlled: bool,
+        //fake mother token
+        mother_token_rep_manager: ResourceManager,
+        //lsu pool for reward token
+        mother_pool: Global<OneResourcePool>,
+        //Vault to put unstaked mother tokens in
+        unstaked_mother_tokens: Vault,
+        //Vault to put staked mother tokens in
+        staked_mother_tokens: Vault,
+        //Reward for mother token staking
+        mother_token_reward: Option<Decimal>,
+        //last update
+        last_update: Instant,
     }
 
     impl Staking {
@@ -106,9 +120,39 @@ mod staking {
             symbol: String,
             dao_controlled: bool,
             max_unstaking_delay: i64,
-        ) -> Global<Staking> {
+        ) -> (Global<Staking>, ResourceAddress) {
             let (address_reservation, component_address) =
                 Runtime::allocate_component_address(Staking::blueprint_id());
+
+            let mother_token_rep_manager: ResourceManager = ResourceBuilder::new_fungible(OwnerRole::None)
+            .divisibility(DIVISIBILITY_MAXIMUM)
+            .metadata(metadata! (
+                init {
+                    "name" => format!("{} fake token", name), updatable;
+                    "symbol" => format!("fake{}", symbol), updatable;
+                    "description" => format!("A fake {} token, used as a representation in staking.", name), updatable;
+                }
+            ))
+            .mint_roles(mint_roles!(
+                minter => rule!(require(global_caller(component_address)));
+                minter_updater => rule!(deny_all);
+            ))
+            .burn_roles(burn_roles!(
+                burner => rule!(require(global_caller(component_address)));
+                burner_updater => rule!(deny_all);
+            ))
+            .withdraw_roles(withdraw_roles!(
+                withdrawer => rule!(require(global_caller(component_address)));
+                withdrawer_updater => rule!(deny_all);
+            ))
+            .create_with_no_initial_supply();
+
+            let mother_pool = Blueprint::<OneResourcePool>::instantiate(
+                OwnerRole::Fixed(rule!(require(controller))),
+                rule!(require(global_caller(component_address))),
+                mother_token_rep_manager.address(),
+                None,
+            );
 
             let id_manager = ResourceBuilder::new_integer_non_fungible::<Id>(OwnerRole::Fixed(
                 rule!(require(controller)),
@@ -146,7 +190,7 @@ mod staking {
             ))
             .create_with_no_initial_supply();
 
-            let stake_transfer_receipt_manager = ResourceBuilder::new_integer_non_fungible::<UnstakeReceipt>(
+            let stake_transfer_receipt_manager = ResourceBuilder::new_integer_non_fungible::<StakeTransferReceipt>(
                 OwnerRole::Fixed(rule!(require(controller))),
             )
             .metadata(metadata!(
@@ -165,6 +209,8 @@ mod staking {
                 burner_updater => rule!(deny_all);
             ))
             .create_with_no_initial_supply();
+
+            let id_address: ResourceAddress = id_manager.address();
 
             let unstake_receipt_manager =
                 ResourceBuilder::new_integer_non_fungible::<UnstakeReceipt>(OwnerRole::Fixed(
@@ -191,7 +237,7 @@ mod staking {
                 ))
                 .create_with_no_initial_supply();
 
-            Self {
+            let component = Self {
                 next_period: Clock::current_time_rounded_to_minutes()
                     .add_days(period_interval)
                     .unwrap(),
@@ -209,11 +255,19 @@ mod staking {
                 reward_vault: FungibleVault::with_bucket(rewards.as_fungible()),
                 stakes: HashMap::new(),
                 dao_controlled,
+                mother_token_rep_manager,
+                mother_pool,
+                unstaked_mother_tokens: Vault::new(rewards.resource_address()),
+                staked_mother_tokens: Vault::new(rewards.resource_address()),
+                mother_token_reward: None,
+                last_update: Clock::current_time_rounded_to_minutes(),
             }
             .instantiate()
             .prepare_to_globalize(OwnerRole::Fixed(rule!(require(controller))))
             .with_address(address_reservation)
-            .globalize()
+            .globalize();
+
+            (component, id_address)
         }
 
         // this method updates the component's period and saves the rewards accompanying the period
@@ -258,7 +312,24 @@ mod staking {
                     .add_days((1 + extra_periods) * self.period_interval)
                     .unwrap();
             }
+
+            if Clock::current_time_is_strictly_after(self.last_update, TimePrecision::Minute) {
+                if let Some(reward) = self.mother_token_reward {
+                    let seconds_since_last_update: i64 = Clock::current_time_rounded_to_minutes()
+                        .seconds_since_unix_epoch
+                        - self.last_update.seconds_since_unix_epoch;
+                    let seconds_per_period: i64 = self.period_interval * 86400;
+                    let reward_fraction: Decimal = reward * Decimal::from(seconds_since_last_update) / Decimal::from(seconds_per_period);
+    
+                    if self.reward_vault.amount() > reward_fraction && self.staked_mother_tokens.amount() > dec!(0) {
+                        self.staked_mother_tokens.put(self.reward_vault.take(reward_fraction).into());
+                        self.mother_pool.protected_deposit(self.mother_token_rep_manager.mint(reward_fraction));
+                    }
+                }
+                self.last_update = Clock::current_time_rounded_to_minutes();           
+            }
         }
+
         // This method requests an unstake of staked tokens
         //
         // ## INPUT
@@ -305,7 +376,14 @@ mod staking {
             if let Some(locked_until) = resource.locked_until {
                 assert!(
                     Clock::current_time_is_at_or_after(locked_until, TimePrecision::Minute),
-                    "You cannot unstake tokens currently participating in a vote."
+                    "You cannot unstake tokens currently locked."
+                );
+            }
+
+            if let Some(voting_until) = resource.voting_until {
+                assert!(
+                    Clock::current_time_is_at_or_after(voting_until, TimePrecision::Minute),
+                    "You cannot unstake tokens currently voting in a proposal."
                 );
             }
 
@@ -334,6 +412,9 @@ mod staking {
                     stake_transfer_receipt,
                 )
             } else {
+                if address == self.reward_vault.resource_address() {
+                    unstake_amount = self.unmake_mother_lsu(unstake_amount);
+                }
                 let unstake_receipt = UnstakeReceipt {
                     address,
                     amount: unstake_amount,
@@ -380,11 +461,15 @@ mod staking {
 
             receipt.burn();
 
-            self.stakes
+            if receipt_data.address == self.reward_vault.resource_address() {
+                self.unstaked_mother_tokens.take(receipt_data.amount)
+            } else {
+                self.stakes
                 .get_mut(&receipt_data.address)
                 .unwrap()
                 .vault
                 .take(receipt_data.amount)
+            }            
         }
 
         // This method creates a new staking ID
@@ -432,7 +517,7 @@ mod staking {
         // - the method checks whether it received tokens or a transfer receipt
         // - the method adds tokens to an internal vault, or burns the transfer receipt
         // - the method updates the staking ID
-        pub fn stake(&mut self, stake_bucket: Bucket, id_proof: Option<Proof>) -> Option<Bucket> {
+        pub fn stake(&mut self, mut stake_bucket: Bucket, id_proof: Option<Proof>) -> Option<Bucket> {
             let id: NonFungibleLocalId;
             let id_bucket: Option<Bucket> = None;
 
@@ -451,6 +536,10 @@ mod staking {
                 "Please claim unclaimed rewards on your ID before staking."
             );
 
+            if stake_bucket.resource_address() == self.reward_vault.resource_address() {
+                stake_bucket = self.make_mother_lsu(stake_bucket);
+            }
+
             let stake_amount: Decimal;
             let address: ResourceAddress;
 
@@ -468,6 +557,7 @@ mod staking {
                 .or_insert(Resource {
                     amount_staked: stake_amount,
                     locked_until: None,
+                    voting_until: None,
                 });
 
             self.id_manager
@@ -480,7 +570,6 @@ mod staking {
                 "next_period",
                 self.current_period + 1,
             );
-
             id_bucket
         }
 
@@ -531,7 +620,7 @@ mod staking {
                             .unwrap()
                             * id_data
                                 .resources
-                                .get(&address)
+                                .get(address)
                                 .map_or(dec!(0), |resource| resource.amount_staked);
                     }
                 }
@@ -545,6 +634,7 @@ mod staking {
         // ## INPUT
         // - `address`: the address of the stakable token
         // - `id_proof`: the proof of the staking ID
+        // - `days_to_lock`: the duration for which the tokens are locked
         //
         // ## OUTPUT
         // - rewards for locking the tokens
@@ -557,7 +647,7 @@ mod staking {
         // - the method returns the rewards for locking the tokens
 
 
-        pub fn lock_stake(&mut self, address: ResourceAddress, id_proof: NonFungibleProof) -> FungibleBucket {
+        pub fn lock_stake(&mut self, address: ResourceAddress, id_proof: NonFungibleProof, days_to_lock: i64) -> FungibleBucket {
             let id_proof =
                 id_proof.check_with_message(self.id_manager.address(), "Invalid Id supplied!");
             let id = id_proof.non_fungible::<Id>().local_id().clone();
@@ -571,19 +661,90 @@ mod staking {
                 .clone();
 
             let amount_staked = resource.amount_staked;
-       
+            let new_lock: Instant;
+            let max_lock: Instant = Clock::current_time_rounded_to_minutes().add_days(stakable.lock.max_duration).unwrap();
+            
             if let Some(locked_until) = resource.locked_until {
-                assert!(Clock::current_time_is_at_or_after(locked_until, TimePrecision::Minute), "Tokens are already locked.");
+                if locked_until.compare(Clock::current_time_rounded_to_minutes(), TimeComparisonOperator::Gt) {
+                    new_lock = locked_until.add_days(days_to_lock).unwrap();
+                } else {
+                    new_lock = Clock::current_time_rounded_to_minutes().add_days(days_to_lock).unwrap();
+                }
+            } else {
+                new_lock = Clock::current_time_rounded_to_minutes().add_days(days_to_lock).unwrap();
             }
 
-            let lock_until: Instant = Clock::current_time_rounded_to_minutes().add_days(stakable.lock.duration).unwrap();                 
-            resource.locked_until = Some(lock_until);
+            assert!(new_lock.compare(max_lock, TimeComparisonOperator::Lte), "New lock duration exceeds maximum lock duration.");
+              
+            resource.locked_until = Some(new_lock);
             resource_map.insert(address, resource);
 
             self.id_manager
                 .update_non_fungible_data(&id, "resources", resource_map);
 
-            self.reward_vault.take(stakable.lock.payment * amount_staked)
+            self.reward_vault.take((stakable.lock.payment.checked_powi(days_to_lock).unwrap() * amount_staked) - amount_staked)
+        }
+
+        // This method unlocks locked (staked) tokens for a certain duration against payment that's worth more than the locking reward
+        //
+        // ## INPUT
+        // - `address`: the address of the stakable token
+        // - `id_proof`: the proof of the staking ID
+        // - `payment`: the payment for unlocking the tokens
+        // - `days_to_unlock`: the duration for which the tokens are unlocked
+        //
+        // ## OUTPUT
+        // - leftover tokens
+        //
+        // ## LOGIC
+        // - the method checks the staking ID
+        // - the method calculates the unlock fee
+        // - the method checks whether the payment is enough and takes it, and redestributes it
+        // - the method updates the locking time of the tokens
+        // - the method returns leftover unlock fee
+
+
+        pub fn unlock_stake(&mut self, address: ResourceAddress, id_proof: NonFungibleProof, mut payment: Bucket, days_to_unlock: i64) -> Bucket {
+            let id_proof =
+                id_proof.check_with_message(self.id_manager.address(), "Invalid Id supplied!");
+            let id = id_proof.non_fungible::<Id>().local_id().clone();
+            let stakable = self.stakes.get(&address).unwrap();
+
+            let id_data: Id = self.id_manager.get_non_fungible_data(&id);
+            let mut resource_map = id_data.resources.clone();
+            let mut resource = resource_map
+                .get(&address)
+                .expect("Stakable not found in staking ID.")
+                .clone();
+
+            let amount_staked = resource.amount_staked;
+            let necessary_payment = stakable.lock.unlock_multiplier * ((stakable.lock.payment.checked_powi(days_to_unlock).unwrap() * amount_staked) - amount_staked);
+            assert!(payment.amount() >= necessary_payment, "Payment is not enough to unlock the tokens.");
+            let to_use_tokens: Bucket = payment.take(necessary_payment);
+
+            if self.staked_mother_tokens.amount() > dec!(0) {
+                self.mother_pool.protected_deposit(self.mother_token_rep_manager.mint(to_use_tokens.amount()));
+                self.staked_mother_tokens.put(to_use_tokens);
+            }
+
+            let new_lock: Instant;
+            let min_lock: Instant = Clock::current_time_rounded_to_minutes().add_days(-1).unwrap();
+            
+            if let Some(locked_until) = resource.locked_until {
+                new_lock = locked_until.add_days(-days_to_unlock).unwrap();
+            } else {
+                panic!("Tokens not locked.");
+            }
+
+            assert!(new_lock.compare(min_lock, TimeComparisonOperator::Gte), "Unlocking too many days in the past. You're wasting your payment!");
+              
+            resource.locked_until = Some(new_lock);
+            resource_map.insert(address, resource);
+
+            self.id_manager
+                .update_non_fungible_data(&id, "resources", resource_map);
+
+            payment
         }
 
         //////////////////////////////////////////////////////////////////////
@@ -594,11 +755,11 @@ mod staking {
             self.period_interval = new_interval;
         }
 
-        pub fn fill_rewards(&mut self, bucket: Bucket) {
+        pub fn put_tokens(&mut self, bucket: Bucket) {
             self.reward_vault.put(bucket.as_fungible());
         }
 
-        pub fn remove_rewards(&mut self, amount: Decimal) -> Bucket {
+        pub fn remove_tokens(&mut self, amount: Decimal) -> Bucket {
             self.reward_vault.take(amount).into()
         }
 
@@ -615,7 +776,17 @@ mod staking {
             self.stakes.get_mut(&address).unwrap().reward_amount = reward;
         }
 
-        pub fn add_stakable(&mut self, address: ResourceAddress, reward_amount: Decimal, lock: Lock) {
+        pub fn set_mother_token_reward(&mut self, reward: Option<Decimal>) {
+            self.mother_token_reward = reward;
+        }
+
+        pub fn add_stakable(&mut self, address: ResourceAddress, reward_amount: Decimal, payment: Decimal, max_duration: i64, unlock_multiplier: Decimal) {
+            let lock: Lock = Lock {
+                payment,
+                max_duration,
+                unlock_multiplier,
+            };
+
             self.stakes.insert(
                 address,
                 StakableUnit {
@@ -629,7 +800,13 @@ mod staking {
             );
         }
 
-        pub fn edit_stakable(&mut self, address: ResourceAddress, reward_amount: Decimal, lock: Lock) {
+        pub fn edit_stakable(&mut self, address: ResourceAddress, reward_amount: Decimal, payment: Decimal, max_duration: i64, unlock_multiplier: Decimal) {
+            let lock: Lock = Lock {
+                payment,
+                max_duration,
+                unlock_multiplier,
+            };
+
             let stakable = self.stakes.get_mut(&address).unwrap();
             stakable.reward_amount = reward_amount;
             stakable.lock = lock;
@@ -651,9 +828,9 @@ mod staking {
         //
         // ## LOGIC
         // - the method checks whether a DAO is controlling the staking
-        // - the method updates the locked_until field of the staking ID appropriately
+        // - the method updates the voting_until field of the staking ID appropriately
         
-        pub fn set_lock(&mut self, address: ResourceAddress, lock_until: Instant, id: NonFungibleLocalId) {
+        pub fn vote(&mut self, address: ResourceAddress, voting_until: Instant, id: NonFungibleLocalId) -> Decimal {
             assert!(self.dao_controlled, "This functionality is only available if a DAO is controlling the staking.");
             let id_data: Id = self.id_manager.get_non_fungible_data(&id);
 
@@ -662,12 +839,15 @@ mod staking {
                 .get(&address)
                 .expect("Stakable not found in staking ID.")
                 .clone();
-               
-            resource.locked_until = Some(lock_until);
+
+            let vote_power: Decimal = resource.amount_staked;   
+            resource.voting_until = Some(voting_until);
             resource_map.insert(address, resource);
 
             self.id_manager
                 .update_non_fungible_data(&id, "resources", resource_map);
+
+            vote_power
         }
 
         //////////////////////////////////////////////////////////////////////
@@ -716,12 +896,35 @@ mod staking {
         /// - the method returns the amount of staked tokens and the address of the stakable token
         
         fn stake_transfer_receipt(&mut self, receipt: NonFungibleBucket) -> (Decimal, ResourceAddress) {
-                let receipt_data = receipt.non_fungible::<StakeTransferReceipt>().data();
-                let address: ResourceAddress = receipt_data.address;
-                let stake_amount: Decimal = receipt_data.amount;
-                receipt.burn();
+            let receipt_data = receipt.non_fungible::<StakeTransferReceipt>().data();
+            let address: ResourceAddress = receipt_data.address;
+            let stake_amount: Decimal = receipt_data.amount;
+            receipt.burn();
 
-                (stake_amount, address)
-            }
+            (stake_amount, address)
+        }
+
+        /// Tiny helper methods
+
+        /// This method converts the reward token to an LSU so you don't have to claim rewards manually
+        fn make_mother_lsu(&mut self, stake_bucket: Bucket) -> Bucket {
+            let lsus: Bucket = self.mother_pool.contribute(self.mother_token_rep_manager.mint(stake_bucket.amount()));
+            self.staked_mother_tokens.put(stake_bucket);
+            lsus
+        }
+
+        /// This method converts the LSU back into a fungible token so you can claim rewards manually
+        fn unmake_mother_lsu(&mut self, amount: Decimal) -> Decimal {
+            let unstake_bucket: Bucket = self.stakes
+                .get_mut(&self.reward_vault.resource_address())
+                .unwrap()
+                .vault
+                .take(amount);
+            let unstaked_mother_token_rep: Bucket = self.mother_pool.redeem(unstake_bucket);
+            let amount = unstaked_mother_token_rep.amount();
+            unstaked_mother_token_rep.burn();
+            self.unstaked_mother_tokens.put(self.staked_mother_tokens.take(amount));
+            amount
+        }
     }
 }

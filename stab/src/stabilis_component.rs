@@ -948,8 +948,6 @@ mod stabilis {
                     .to_vec();
             }
 
-            let return_receipt: Bucket;
-
             //Save CDP if CR is high enough again after staking reward update, unless the collateral_ids vector is full
             //Return the initial marker receipt if saving wasn't possible
             //Or return a new marker receipt if saving was possible
@@ -964,13 +962,10 @@ mod stabilis {
                 let marker_data: CdpMarker = marker_receipt_success.non_fungible().data();
                 marker_receipt_success.burn();
                 let cdp_data: Cdp = self.cdp_manager.get_non_fungible_data(&collateral_id);
-
-                return_receipt = self.save(marker_data, cdp_data, cr);
+                self.save(marker_data, cdp_data, cr)
             } else {
-                return_receipt = marker_receipt_success.into();
+                marker_receipt_success.into()
             }
-
-            return_receipt
         }
 
         pub fn force_liquidate(

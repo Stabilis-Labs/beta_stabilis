@@ -14,11 +14,11 @@ mod flash_loans {
 
     const STABILIS: Global<Stabilis> = global_component!(
         Stabilis,
-        "component_tdx_2_1cpktta3wywkjphzmfxe4fy5ssuedq8hpygml08c06kr8gk8rlkwm0t"
+        "component_tdx_2_1czdep00tnsy9js8atnc6u3v472nxgjmk5j6prtzfw56ttz9fdk9a8n"
     );
 
     extern_blueprint! {
-        "package_tdx_2_1pkvqu0alcxrrmywng96tyshqs3622gy4dh0frrykrsrzv3qnspzzkz",
+        "package_tdx_2_1pkla7lxsrjy86ygsa2wl77rgpau497h9kljs94pekfylr6lwlg6e9e",
         Stabilis {
             fn free_stab(&self, amount: Decimal) -> Bucket;
             fn burn_stab(&self, bucket: Bucket) -> ();

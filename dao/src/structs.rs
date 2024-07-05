@@ -24,13 +24,15 @@ pub struct Id {
 #[derive(ScryptoSbor)]
 pub struct Lock {
     pub payment: Decimal,
-    pub duration: i64,
+    pub max_duration: i64,
+    pub unlock_multiplier: Decimal,
 }
 
 #[derive(ScryptoSbor, Clone)]
 pub struct Resource {
     pub amount_staked: Decimal,
     pub locked_until: Option<Instant>,
+    pub voting_until: Option<Instant>,
 }
 
 // Stakable unit structure, used by the component to data about a stakable token.
@@ -80,9 +82,10 @@ pub struct ProposalStep {
     pub badge: ResourceAddress,
     pub method: String,
     pub args: ScryptoValue,
+    pub return_bucket: bool,
 }
 
-#[derive(ScryptoSbor, PartialEq)]
+#[derive(ScryptoSbor, PartialEq, Clone, Copy)]
 pub enum ProposalStatus {
     Building,
     Ongoing,
@@ -97,5 +100,16 @@ pub struct GovernanceParameters {
     pub fee: Decimal,
     pub proposal_duration: i64,
     pub quorum: Decimal,
-    pub minimum_for_fraction: Decimal,
+    pub approval_threshold: Decimal,
+}
+
+#[derive(ScryptoSbor)]
+pub struct Job {
+    pub employee: Global<Account>,
+    pub salary: Decimal,
+    pub salary_token: ResourceAddress,
+    pub duration: i64,
+    pub recurring: bool,
+    pub title: String,
+    pub description: String,
 }

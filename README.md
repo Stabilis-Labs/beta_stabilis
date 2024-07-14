@@ -49,8 +49,6 @@ The Governance component is central to the DAO's operations, allowing users to c
 
 The DAO can govern any number of components by executing authorized method calls on them, allowing for flexible control over the Stabilis protocol and potentially other systems.
 
-Thank you for your kind words! I'm glad to help. I'll create a new section explaining the deployment process for the Stabilis protocol, including the diagrams as you've requested.
-
 # Architecture: Deploying the Stabilis Protocol
 
 This section outlines the step-by-step process to deploy the Stabilis protocol, including both the STAB module and the DAO (ILIS) module. The total architecture of these modules is then displayed in a diagram.

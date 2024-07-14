@@ -1,4 +1,4 @@
-//! # The STAB component
+//! # The STAB component Blueprint
 //! 
 //! This module contains the Stabilis component, which is a smart contract that allows users to open, close, top up and liquidate loans of STAB tokens.
 //! The STAB token is a stablecoin that is pegged to its own internal price, which is determined by an interest rate (meaning, this internal price is variable!).

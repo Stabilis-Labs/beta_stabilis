@@ -1,3 +1,6 @@
+//! # Oracle Blueprint
+//! Component aggregating Oracle data and processes it into data usable by the Proxy Component.
+
 use scrypto::prelude::*;
 
 /*#[derive(ScryptoSbor, PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]

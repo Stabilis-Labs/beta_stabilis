@@ -169,5 +169,3 @@ graph TD
     class DAO,Staking,Gov,Reent,LBP dao;
 
 ```
-
-This diagram illustrates the complete Stabilis protocol, showing how the STAB module and the DAO (ILIS) module are interconnected. The Governance module of the DAO can authorize method calls on the Proxy module, allowing the DAO to control and update the STAB module as needed.

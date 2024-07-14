@@ -22,7 +22,6 @@ The STAB module is responsible for creating and managing the STAB token. It cons
 - Liquidation process (marking, liquidating, retrieving leftover collateral)
 - Interest rate adjustment using a PID controller to maintain the STAB peg
 - Collateral price updates from oracles
-- Updating STAB's internal price based on STAB's demand and supply
 
 ## DAO (ILIS) Module
 

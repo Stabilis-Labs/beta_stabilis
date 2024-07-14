@@ -1,4 +1,4 @@
-# Stabilis Protocol Package
+# Stabilis Protocol
 
 The Stabilis protocol is a decentralized system for creating and managing a stablecoin called STAB, governed by a DAO (Decentralized Autonomous Organization). The protocol consists of two main parts: the STAB module and the DAO (ILIS) module.
 

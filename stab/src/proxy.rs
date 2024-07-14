@@ -482,7 +482,7 @@ mod proxy {
             })
         }
 
-        pub fn partial_close_cdp(&mut self, receipt_proof: NonFungibleProof, stab_payment: Bucket) {
+        pub fn partial_close_cdp(&mut self, receipt_proof: NonFungibleProof, stab_payment: Bucket) -> (Option<Bucket>, Option<Bucket>) {
             let receipt_proof = receipt_proof.check_with_message(
                 self.cdp_receipt_manager.address(),
                 "Incorrect proof! Are you sure this loan is yours?",
@@ -492,7 +492,7 @@ mod proxy {
 
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis.partial_close_cdp(receipt_id, stab_payment)
-            });
+            })
         }
 
         pub fn retrieve_leftover_collateral(&mut self, receipt_proof: NonFungibleProof) -> Bucket {
@@ -580,13 +580,12 @@ mod proxy {
         pub fn liquidate_position_without_marker(
             &mut self,
             payment: Bucket,
-            automatic: bool,
-            skip: i64,
+            skip: Option<i64>,
             cdp_id: NonFungibleLocalId,
         ) -> (Bucket, Option<Bucket>, Bucket) {
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
                 self.stabilis
-                    .liquidate_position_without_marker(payment, automatic, skip, cdp_id)
+                    .liquidate_position_without_marker(payment, skip, cdp_id)
             })
         }
 

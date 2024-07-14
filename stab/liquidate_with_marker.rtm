@@ -4,33 +4,32 @@ CALL_METHOD
     Decimal("5000");
 
 CALL_METHOD
-    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") #Primary account 
-    "withdraw"
-    Address("resource_sim1t5d406396cmx60t5g7cvsly8d8wfmagzyz0lyvzk06y0lvwct2rv4q") # stab address
-    Decimal("5");
-
-# Put the stab from worktop into stab_bucket
-TAKE_FROM_WORKTOP 
-    Address("resource_sim1t5d406396cmx60t5g7cvsly8d8wfmagzyz0lyvzk06y0lvwct2rv4q") # stab address
-    Decimal("5") 
-    Bucket("stab_bucket");
-
-CALL_METHOD
     Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
     "create_proof_of_non_fungibles"
-    Address("resource_sim1ngvff6g8fqtcd3h6t3lmwrnzt4anfcld9tdh0fmxs948j9tjy7tvqx")
+    Address("resource_sim1n23a2ddfca53e595rjkkpl06mdszfxzpxmmjrzjv9qd83yjjeq4w0g") #marker resource address
     Array<NonFungibleLocalId>(
-        NonFungibleLocalId("#2#")); #fungible id
+        NonFungibleLocalId("#1#")); #stabid fungible id
 
 POP_FROM_AUTH_ZONE
     Proof("marker_proof");
+	
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") #Primary account 
+    "withdraw"
+    Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3") # collateral address
+    Decimal("1000");
+
+TAKE_FROM_WORKTOP 
+    Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3") # collateral address
+    Decimal("1000") 
+    Bucket("collateral_bucket");
 
 CALL_METHOD    
-    Address("component_sim1cpwu4wc6rg0am8l9prnh2lzqkk6hue6stzqhdx48rzvek2mmm5vp0p")
+    Address("component_sim1crvqxka5xzny0eey9qtkwnj2cxm3xg76cfl68qk3kr2hdzr2r2ca96") #proxy comp address
     "liquidate_position_with_marker"
-    Proof("marker_proof")
-    Bucket("stab_bucket");
-
+	Proof("marker_proof")
+    Bucket("collateral_bucket");
+	
 CALL_METHOD
     Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
     "deposit_batch"

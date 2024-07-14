@@ -6,23 +6,22 @@ CALL_METHOD
 CALL_METHOD
     Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") #Primary account 
     "withdraw"
-    Address("resource_sim1t5d406396cmx60t5g7cvsly8d8wfmagzyz0lyvzk06y0lvwct2rv4q") # stab address
-    Decimal("5");
+    Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3") # collateral address
+    Decimal("1000");
 
-# Put the stab from worktop into stab_bucket
 TAKE_FROM_WORKTOP 
-    Address("resource_sim1t5d406396cmx60t5g7cvsly8d8wfmagzyz0lyvzk06y0lvwct2rv4q") # stab address
-    Decimal("5") 
-    Bucket("stab_bucket");
+    Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3") # collateral address
+    Decimal("1000") 
+    Bucket("collateral_bucket");
 
 CALL_METHOD    
-    Address("component_sim1cpwu4wc6rg0am8l9prnh2lzqkk6hue6stzqhdx48rzvek2mmm5vp0p")
+    Address("component_sim1crvqxka5xzny0eey9qtkwnj2cxm3xg76cfl68qk3kr2hdzr2r2ca96") #proxy comp address
     "liquidate_position_without_marker"
-    Bucket("stab_bucket")
-    true
-    0i64
-    NonFungibleLocalId("#0#");
-
+    Bucket("collateral_bucket")
+	Bool(true)
+	I64(0i64)
+	NonFungibleLocalId("#0#");
+	
 CALL_METHOD
     Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
     "deposit_batch"

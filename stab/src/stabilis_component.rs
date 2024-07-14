@@ -1,9 +1,39 @@
-use crate::nft_structs::*;
+//! # The STAB component
+//! 
+//! This module contains the Stabilis component, which is a smart contract that allows users to open, close, top up and liquidate loans of STAB tokens.
+//! The STAB token is a stablecoin that is pegged to its own internal price, which is determined by an interest rate (meaning, this internal price is variable!).
+//!
+//! To open a loan, users must provide collateral in the form of accepted tokens, and receive STAB tokens in return.
+//! The collateral must be worth more than the borrowed STAB tokens (at internal price) times a modifier (MCR), to ensure the loan is safe.
+//! The value of STAB tokens is determined by the internal price, so a negative interest rate, for instance, means it is getting cheaper to borrow STAB tokens over time.
+//! A loan can be paid off at any time by returning the STAB tokens.
+//!
+//! If collateral value < STAB tokens value * MCR, a loan can be marked for liquidation.
+//! After a loan is marked, the borrower has a certain amount of time to save the loan by adding more collateral.
+//! If not saved, the marker of the loan has the first opportunity to liquidate it.
+//! If the marker does not liquidate the loan, anyone can liquidate it.
+//! Liquidating a loan means taking part of the collateral and paying back the STAB tokens. The liquidator receives a fee for this.
+//! If there's still collateral left after this fee, a fee is paid to the Stabilis component.
+//! If there's still collateral left after this fee, the original borrower can retrieve the remaining collateral.
+//!
+//! To summarize, the typical life cycle of a loan, and the accompanying methods called on it:
+//! - Open a loan: `open_cdp`
+//! - Close a loan: `close_cdp`
+//! - Add collateral to a loan: `top_up_cdp`
+//! - Borrow more: `borrow_more`
+//! - Partially close a loan: `partial_close_cdp`
+//! - Force liquidate a loan (liquidate a loan immediately without it being undercollateralized): `force_liquidate`
+//! - Force mint STAB tokens (force a borrower to mint more STAB tokens in return for collateral added to their CDP): `force_mint`
+//! - Mark a loan to liquidate it: `mark_for_liquidation`
+//! - Liquidate a loan: `liquidate_position_with_marker` or `liquidate_position_without_marker`
+//! - Retrieve leftover collateral after being liquidated: `retrieve_leftover_collateral`
+
+use crate::shared_structs::*;
 use scrypto::prelude::*;
 use scrypto_avltree::AvlTree;
 
 #[blueprint]
-mod stabilis {
+mod stabilis_component {
     enable_method_auth! {
         methods {
             return_internal_price => PUBLIC;
@@ -41,29 +71,60 @@ mod stabilis {
         }
     }
     struct Stabilis {
+        /// KVS storing all accepted collaterals and their information
         collaterals: KeyValueStore<ResourceAddress, CollateralInfo>,
+        /// KVS storing all accepted pool units and their information
         pool_units: KeyValueStore<ResourceAddress, PoolUnitInfo>,
+        /// KVS storing all active collateral ratios for each collateral
         collateral_ratios:
             KeyValueStore<ResourceAddress, AvlTree<Decimal, Vec<NonFungibleLocalId>>>,
+        /// Counter for the CDPs
         cdp_counter: u64,
+        /// The resource manager for the CDPs
         cdp_manager: ResourceManager,
+        /// The resource manager for the STAB token
         stab_manager: ResourceManager,
+        /// The resource manager for the controller badge
         controller_badge_manager: ResourceManager,
+        /// The internal price of STAB
         internal_stab_price: Decimal,
+        /// The circulating supply of STAB
         circulating_stab: Decimal,
+        /// The resource manager for the CDP markers
         cdp_marker_manager: ResourceManager,
+        /// Counter for the CDP markers
         cdp_marker_counter: u64,
+        /// AVL tree storing all marked CDPs (Basically used as a very big lazily-loadable Vec, as this data type doesn't exist yet)
         marked_cdps: AvlTree<Decimal, NonFungibleLocalId>,
+        /// Counter for the active marked CDPs
         marked_cdps_active: u64,
+        /// Counter for the marker placing in the AVL tree
         marker_placing_counter: Decimal,
+        /// Resource manager for the liquidation receipts
         liquidation_receipt_manager: ResourceManager,
+        /// Counter for the liquidation receipts
         liquidation_counter: u64,
+        /// The protocol parameters
         parameters: ProtocolParameters,
     }
 
     impl Stabilis {
+        /// Instantiates the Stabilis component
+        ///
+        /// # Output
+        /// - The global instance of the Stabilis component
+        /// - The controller badge for the Stabilis component
+        ///
+        /// # Logic
+        /// - Sets the protocol parameters
+        /// - Assigns a component address
+        /// - Creates the controller badge
+        /// - Creates the STAB token manager
+        /// - Creates the CDP manager
+        /// - Creates the CDP marker manager
+        /// - Creates the liquidation receipt manager
+        /// - Creates the Stabilis component
         pub fn instantiate() -> (Global<Stabilis>, Bucket) {
-            //set protocol parameters
             let parameters = ProtocolParameters {
                 minimum_mint: dec!(1),
                 max_vector_length: 250,
@@ -78,11 +139,10 @@ mod stabilis {
                 stop_force_liquidate: false,
                 force_mint_cr_multiplier: dec!(3),
             };
-            //assign component_address
+
             let (address_reservation, component_address) =
                 Runtime::allocate_component_address(Stabilis::blueprint_id());
 
-            //create the controller badge
             let controller_role: Bucket = ResourceBuilder::new_fungible(OwnerRole::Fixed(rule!(
                 require(global_caller(component_address))
             )))
@@ -102,7 +162,6 @@ mod stabilis {
 
             let controller_badge_manager: ResourceManager = controller_role.resource_manager();
 
-            //create the usds manager
             let stab_manager: ResourceManager = ResourceBuilder::new_fungible(OwnerRole::Fixed(
                 rule!(require(controller_role.resource_address())),
             ))
@@ -139,7 +198,6 @@ mod stabilis {
             ))
             .create_with_no_initial_supply();
 
-            //create the cdp manager
             let cdp_manager: ResourceManager =
                 ResourceBuilder::new_integer_non_fungible::<Cdp>(OwnerRole::Fixed(rule!(
                     require_amount(dec!("0.75"), controller_role.resource_address())
@@ -188,7 +246,6 @@ mod stabilis {
                 ))
                 .create_with_no_initial_supply();
 
-            //create the cdp marker manager
             let cdp_marker_manager: ResourceManager =
                 ResourceBuilder::new_integer_non_fungible::<CdpMarker>(OwnerRole::Fixed(rule!(
                     require_amount(dec!("0.75"), controller_role.resource_address())
@@ -237,7 +294,6 @@ mod stabilis {
                 ))
                 .create_with_no_initial_supply();
 
-            //create the liquidation receipt manager
             let liquidation_receipt_manager: ResourceManager =
                 ResourceBuilder::new_integer_non_fungible::<LiquidationReceipt>(OwnerRole::Fixed(
                     rule!(require_amount(
@@ -280,7 +336,6 @@ mod stabilis {
                 ))
                 .create_with_no_initial_supply();
 
-            //create the stabilis component
             let stabilis = Self {
                 collaterals: KeyValueStore::<ResourceAddress, CollateralInfo>::new(),
                 pool_units: KeyValueStore::<ResourceAddress, PoolUnitInfo>::new(),
@@ -311,10 +366,32 @@ mod stabilis {
             .with_address(address_reservation)
             .globalize();
 
-            // Return the component address as well as the controller badges
             (stabilis, controller_role)
         }
 
+        /// Borrow STAB by opening a CDP (taking out a loan vs. collateral)
+        ///
+        /// # Input
+        /// - `collateral`: The collateral to be used
+        /// - `stab_to_mint`: The amount of STAB to mint
+        /// - `safe`: Whether it is possible to open the loan with less collateral than required (for testing)
+        ///
+        /// # Output
+        /// - The minted STAB in a `Bucket`
+        /// - The CDP receipt in a `Bucket`
+        ///
+        /// # Logic
+        /// - Check whether amount to mint > minimum mint and minting is allowed right now
+        /// - Check whether collateral is accepted and if it is a pool unit
+        /// - Calculate collateral amount, converting pool unit to real (underlying asset) if necessary
+        /// - Assign parent address, which is equal to the collateral address unless the collateral is a pool unit
+        /// - Check whether collateral value is high enough
+        /// - Calculate collateral ratio and insert into AvlTree
+        /// - Create CDP struct for the receipt
+        /// - Check whether the share of this collateral's minted STAB is too high and update STAB circulating supply
+        /// - Mint the CDP receipt
+        /// - Store the collateral in the correct vault
+        /// - Return the minted STAB and the CDP receipt
         pub fn open_cdp(
             &mut self,
             collateral: Bucket,
@@ -333,7 +410,6 @@ mod stabilis {
                 "Not allowed to open loans right now."
             );
 
-            //Check if collateral is accepted and if it is a pool unit
             if self
                 .pool_units
                 .get(&collateral.resource_address())
@@ -357,14 +433,12 @@ mod stabilis {
                 );
             }
 
-            //Calculate collateral amount, if pool unit convert to real
             let collateral_amount: Decimal = self.pool_to_real(
                 collateral.amount(),
                 collateral.resource_address(),
                 is_pool_unit_collateral,
             );
 
-            //Assign parent address, this is equal to the collateral address unless the collateral is a pool unit
             let parent_collateral_address: ResourceAddress = match is_pool_unit_collateral {
                 false => collateral.resource_address(),
                 true => {
@@ -380,14 +454,12 @@ mod stabilis {
                 .unwrap()
                 .collateral_amount += collateral_amount;
 
-            //Get collateral MCR
             let mcr: Decimal = self
                 .collaterals
                 .get(&parent_collateral_address)
                 .unwrap()
                 .mcr;
 
-            //Assert that the collateral value is high enough
             if safe {
                 assert!(
                     self.collaterals
@@ -412,10 +484,8 @@ mod stabilis {
 
             self.cdp_counter += 1;
 
-            //calculate collateral ratio
             let cr: Decimal = collateral_amount / stab_tokens.amount();
 
-            //Insert collateral ratio into AvlTree
             if self
                 .collaterals
                 .get(&parent_collateral_address)
@@ -444,7 +514,6 @@ mod stabilis {
                     .highest_cr = cr;
             }
 
-            //Create Cdp struct for the receipt
             let cdp = Cdp {
                 collateral: collateral.resource_address(),
                 parent_address: parent_collateral_address,
@@ -456,7 +525,6 @@ mod stabilis {
                 marker_id: 0u64,
             };
 
-            //Check whether the share of this collateral's minted STAB is too high and update STAB circulating supply
             self.update_minted_stab(
                 true,
                 is_pool_unit_collateral,
@@ -466,23 +534,40 @@ mod stabilis {
                 collateral.resource_address(),
             );
 
-            //Mint the Cdp receipt
             let cdp_receipt: NonFungibleBucket = self
                 .cdp_manager
                 .mint_non_fungible(&NonFungibleLocalId::integer(self.cdp_counter), cdp)
                 .as_non_fungible();
 
-            //Store the collateral in the correct vault
             self.put_collateral(
                 collateral.resource_address(),
                 is_pool_unit_collateral,
                 collateral,
             );
 
-            //return the minted STAB and the Cdp receipt
             (stab_tokens, cdp_receipt.into())
         }
 
+        ///Close a loan / CDP, by paying off the debt
+        ///
+        /// # Input
+        /// - `receipt_id`: The CDP receipt
+        /// - `stab_payment`: The STAB tokens to pay back
+        ///
+        /// # Output
+        /// - The collateral returned
+        /// - The leftover STAB
+        ///
+        /// # Logic
+        /// - Check if the STAB payment is enough to close the loan
+        /// - Check if the loan is healthy
+        /// - Check if the STAB payment is valid
+        /// - Remove collateral from the vault
+        /// - Update circulating STAB, both for total and chosen collateral
+        /// - Burn the paid back STAB
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Update the CDP receipt
+        /// - Return the collateral and the leftover STAB
         pub fn close_cdp(
             &mut self,
             receipt_id: NonFungibleLocalId,
@@ -507,7 +592,6 @@ mod stabilis {
                 "Invalid STAB payment."
             );
 
-            //Remove collateral from Vault
             let collateral: Bucket = self.take_collateral(
                 receipt_data.collateral,
                 receipt_data.is_pool_unit_collateral,
@@ -519,7 +603,6 @@ mod stabilis {
                 .unwrap()
                 .collateral_amount -= receipt_data.collateral_stab_ratio * receipt_data.minted_stab;
 
-            //Update circulating STAB, both for total and chosen collateral
             self.update_minted_stab(
                 false,
                 receipt_data.is_pool_unit_collateral,
@@ -529,27 +612,37 @@ mod stabilis {
                 receipt_data.collateral,
             );
 
-            //Burn the paid back STAB
             stab_payment.take(receipt_data.minted_stab).burn();
 
-            //Remove the collateral ratio from the AvlTree
             self.remove_cr(
                 receipt_data.parent_address,
                 receipt_data.collateral_stab_ratio,
                 receipt_id.clone(),
             );
 
-            //Update the Cdp receipt
             self.cdp_manager
                 .update_non_fungible_data(&receipt_id, "status", CdpStatus::Closed);
 
             self.cdp_manager
                 .update_non_fungible_data(&receipt_id, "collateral_amount", dec!(0));
 
-            //return the collateral and the leftover STAB
             (collateral, stab_payment)
         }
 
+        /// Retrieve leftover collateral from a liquidated loan / cdp
+        ///
+        /// # Input
+        /// - `receipt_id`: The CDP receipt
+        ///
+        /// # Output
+        /// - The leftover collateral
+        ///
+        /// # Logic
+        /// - Check if the loan is liquidated
+        /// - Check if there is leftover collateral
+        /// - Check if it is allowed to close loans right now
+        /// - Update CDP receipt to 0 collateral
+        /// - Return the leftover collateral
         pub fn retrieve_leftover_collateral(&mut self, receipt_id: NonFungibleLocalId) -> Bucket {
             let receipt_data: Cdp = self.cdp_manager.get_non_fungible_data(&receipt_id);
 
@@ -567,11 +660,9 @@ mod stabilis {
                 "Not allowed to close loans right now."
             );
 
-            //Update Cdp receipt to 0 collateral
             self.cdp_manager
                 .update_non_fungible_data(&receipt_id, "collateral_amount", dec!(0));
 
-            //Return leftover collateral
             self.take_collateral(
                 receipt_data.collateral,
                 receipt_data.is_pool_unit_collateral,
@@ -579,6 +670,26 @@ mod stabilis {
             )
         }
 
+        /// Add collateral to a loan / CDP
+        ///
+        /// # Input
+        /// - `collateral_id`: The CDP receipt
+        /// - `collateral`: The collateral to add
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Check if the loan is healthy or marked
+        /// - Check if the collateral is compatible
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Calculate new collateral ratio
+        /// - Update the collateral amount in the CDP receipt
+        /// - Check if the new collateral ratio is high enough
+        /// - Insert new collateral ratio into AvlTree
+        /// - Store the collateral in the correct vault
+        /// - Update the CDP receipt
+        /// - If the loan was marked, update the marker receipt
         pub fn top_up_cdp(&mut self, collateral_id: NonFungibleLocalId, collateral: Bucket) {
             let receipt_data: Cdp = self.cdp_manager.get_non_fungible_data(&collateral_id);
             let new_collateral_amount = receipt_data.collateral_amount + collateral.amount();
@@ -593,7 +704,6 @@ mod stabilis {
                 "Incompatible token."
             );
 
-            //Remove the collateral ratio from the AvlTree
             if receipt_data.status == CdpStatus::Healthy {
                 self.remove_cr(
                     receipt_data.parent_address,
@@ -602,7 +712,6 @@ mod stabilis {
                 );
             }
 
-            //Calculate new collateral ratio
             let cr: Decimal = self.pool_to_real(
                 new_collateral_amount,
                 collateral.resource_address(),
@@ -624,17 +733,14 @@ mod stabilis {
                 "Not enough collateral added to save this loan."
             );
 
-            //Insert new collateral ratio into AvlTree
             self.insert_cr(receipt_data.parent_address, cr, collateral_id.clone());
 
-            //Store the collateral in the correct vault
             self.put_collateral(
                 receipt_data.collateral,
                 receipt_data.is_pool_unit_collateral,
                 collateral,
             );
 
-            //Update the Cdp receipt
             self.cdp_manager
                 .update_non_fungible_data(&collateral_id, "collateral_stab_ratio", cr);
             self.cdp_manager.update_non_fungible_data(
@@ -662,6 +768,24 @@ mod stabilis {
             }
         }
 
+        /// Remove collateral from a loan / CDP
+        ///
+        /// # Input
+        /// - `collateral_id`: The CDP receipt
+        /// - `amount`: The amount of collateral to remove
+        ///
+        /// # Output
+        /// - The removed collateral
+        ///
+        /// # Logic
+        /// - Check if the loan is healthy
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Calculate new collateral ratio
+        /// - Check if the new collateral ratio is high enough
+        /// - Insert new collateral ratio into AvlTree
+        /// - Retrieve the to-be returned collateral from the correct vault
+        /// - Update the CDP receipt
+        /// - Return the removed collateral
         pub fn remove_collateral(
             &mut self,
             collateral_id: NonFungibleLocalId,
@@ -675,14 +799,12 @@ mod stabilis {
                 "Loan not healthy. Save it first."
             );
 
-            //Remove the collateral ratio from the AvlTree
             self.remove_cr(
                 receipt_data.parent_address,
                 receipt_data.collateral_stab_ratio,
                 collateral_id.clone(),
             );
 
-            //Calculate new collateral ratio
             let cr: Decimal = self.pool_to_real(
                 new_collateral_amount,
                 receipt_data.collateral,
@@ -695,7 +817,6 @@ mod stabilis {
                 .collateral_amount +=
                 (cr - receipt_data.collateral_stab_ratio) * receipt_data.minted_stab;
 
-            //Insert new collateral ratio into AvlTree
             self.insert_cr(receipt_data.parent_address, cr, collateral_id.clone());
 
             assert!(
@@ -707,14 +828,12 @@ mod stabilis {
                 "Removal would put the CR below MCR."
             );
 
-            //Retrieve the to-be returned collateral from the correct vault
             let removed_collateral: Bucket = self.take_collateral(
                 receipt_data.collateral,
                 receipt_data.is_pool_unit_collateral,
                 amount,
             );
 
-            //Update the Cdp receipt
             self.cdp_manager
                 .update_non_fungible_data(&collateral_id, "collateral_stab_ratio", cr);
             self.cdp_manager.update_non_fungible_data(
@@ -723,17 +842,41 @@ mod stabilis {
                 new_collateral_amount,
             );
 
-            //Return the removed collateral
             removed_collateral
         }
 
-        pub fn partial_close_cdp(&mut self, collateral_id: NonFungibleLocalId, repayment: Bucket) {
+        /// Partially close a loan / CDP (pay off part of the debt)
+        ///
+        /// # Input
+        /// - `collateral_id`: The CDP receipt
+        /// - `repayment`: The STAB tokens to pay back
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Check if the STAB payment is valid
+        /// - If the repayment > debt, close the loan and return leftover collateral and leftover payment
+        /// - Check if borrowed amount is still above minimum borrow
+        /// - Check if the loan is healthy
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Calculate new collateral ratio
+        /// - Burn the paid back STAB
+        /// - Insert new collateral ratio into AvlTree
+        /// - Check if the new collateral ratio is high enough
+        /// - Update the CDP receipt
+        pub fn partial_close_cdp(&mut self, collateral_id: NonFungibleLocalId, repayment: Bucket) -> (Option<Bucket>, Option<Bucket>) {
             assert!(
                 repayment.resource_address() == self.stab_manager.address(),
                 "Invalid STAB payment."
             );
             let receipt_data: Cdp = self.cdp_manager.get_non_fungible_data(&collateral_id);
             let new_stab_amount = receipt_data.minted_stab - repayment.amount();
+
+            if new_stab_amount < dec!(0) {
+                let (collateral, leftover_payment): (Bucket, Bucket) = self.close_cdp(collateral_id, repayment);
+                return (Some(collateral), Some(leftover_payment));
+            }
 
             assert!(
                 new_stab_amount >= self.parameters.minimum_mint,
@@ -745,14 +888,12 @@ mod stabilis {
                 "Loan not healthy. Save it first."
             );
 
-            //Remove the collateral ratio from the AvlTree
             self.remove_cr(
                 receipt_data.parent_address,
                 receipt_data.collateral_stab_ratio,
                 collateral_id.clone(),
             );
 
-            //Calculate new collateral ratio
             let cr: Decimal = self.pool_to_real(
                 receipt_data.collateral_amount,
                 receipt_data.collateral,
@@ -770,7 +911,6 @@ mod stabilis {
 
             repayment.burn();
 
-            //Insert new collateral ratio into AvlTree
             self.insert_cr(receipt_data.parent_address, cr, collateral_id.clone());
 
             assert!(
@@ -782,7 +922,6 @@ mod stabilis {
                 "Action would put the CR below MCR."
             );
 
-            //Update the Cdp receipt
             self.cdp_manager
                 .update_non_fungible_data(&collateral_id, "collateral_stab_ratio", cr);
             self.cdp_manager.update_non_fungible_data(
@@ -790,8 +929,28 @@ mod stabilis {
                 "minted_stab",
                 new_stab_amount,
             );
+
+            (None, None)
         }
 
+        /// Borrow more STAB by adding to the loan / CDP
+        ///
+        /// # Input
+        /// - `collateral_id`: The CDP receipt
+        /// - `amount`: The amount of STAB to mint / borrow
+        ///
+        /// # Output
+        /// - The minted STAB in a `Bucket`
+        ///
+        /// # Logic
+        /// - Check if the loan is healthy
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Calculate new collateral ratio
+        /// - Update the minted STAB
+        /// - Insert new collateral ratio into AvlTree
+        /// - Check if the new collateral ratio is high enough
+        /// - Update the CDP receipt
+        /// - Mint the STAB and return it
         pub fn borrow_more(
             &mut self,
             collateral_id: NonFungibleLocalId,
@@ -805,14 +964,12 @@ mod stabilis {
                 "Loan not healthy. Save it first."
             );
 
-            //Remove the collateral ratio from the AvlTree
             self.remove_cr(
                 receipt_data.parent_address,
                 receipt_data.collateral_stab_ratio,
                 collateral_id.clone(),
             );
 
-            //Calculate new collateral ratio
             let cr: Decimal = self.pool_to_real(
                 receipt_data.collateral_amount,
                 receipt_data.collateral,
@@ -828,7 +985,6 @@ mod stabilis {
                 receipt_data.collateral,
             );
 
-            //Insert new collateral ratio into AvlTree
             self.insert_cr(receipt_data.parent_address, cr, collateral_id.clone());
 
             assert!(
@@ -840,7 +996,6 @@ mod stabilis {
                 "Removal would put the CR below MCR."
             );
 
-            //Update the Cdp receipt
             self.cdp_manager
                 .update_non_fungible_data(&collateral_id, "collateral_stab_ratio", cr);
             self.cdp_manager.update_non_fungible_data(
@@ -852,9 +1007,28 @@ mod stabilis {
             self.stab_manager.mint(amount)
         }
 
+        /// Mark a loan for liquidation
+        ///
+        /// # Input
+        /// - `collateral`: The collateral for which to look for undercollateralized loans to be liquidated
+        ///
+        /// # Output
+        /// - The marker receipt in a `Bucket`
+        ///
+        /// # Logic
+        /// - Get the CDP with the lowest collateral ratio for the chosen collateral
+        /// - Calculate new collateral ratio (as pool unit aren't always up to date)
+        /// - Create the marker receipt struct
+        /// - Insert the CDP into the marked CDPs AvlTree
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Mint marker receipt, which will be returned if the marking is a success
+        /// - Update the Cdp receipt to point to the marker receipt and get marked status
+        /// - Get the collateral ids for the collateral ratio that was newly calculated (which is different if working with pool units)
+        /// - Save CDP if CR is high enough after pool_to_real conversion, unless the collateral_ids vector is full
+        ///     - Return the initial marker receipt if saving wasn't possible
+        ///     - Or return a new marker receipt if saving was possible
         pub fn mark_for_liquidation(&mut self, collateral: ResourceAddress) -> Bucket {
-            //Get the CDP with lowest collateral ratio for the chosen collateral
-            let (_first_cr, collateral_ids) = self
+            let (_first_cr, collateral_ids, _next_key) = self
                 .collateral_ratios
                 .get_mut(&collateral)
                 .unwrap()
@@ -875,7 +1049,6 @@ mod stabilis {
                 "No possible liquidations."
             );
 
-            //Calculate new collateral ratio
             let cr: Decimal = self.pool_to_real(
                 data.collateral_amount,
                 data.collateral,
@@ -891,7 +1064,6 @@ mod stabilis {
             self.cdp_marker_counter += 1;
             let id: Decimal = self.marker_placing_counter;
 
-            //Create the marker receipt struct
             let marker = CdpMarker {
                 mark_type: CdpUpdate::Marked,
                 time_marked: Clock::current_time_rounded_to_minutes(),
@@ -900,18 +1072,15 @@ mod stabilis {
                 used: false,
             };
 
-            //Insert the CDP into the marked CDPs AvlTree
             self.marked_cdps.insert(id, collateral_id.clone());
             self.marked_cdps_active += 1;
 
-            //Remove the collateral ratio from the AvlTree
             self.remove_cr(
                 data.parent_address,
                 data.collateral_stab_ratio,
                 collateral_id.clone(),
             );
 
-            //Mint marker receipt, which will be returned if the marking is a success
             let marker_receipt_success: NonFungibleBucket = self
                 .cdp_marker_manager
                 .mint_non_fungible(
@@ -920,7 +1089,6 @@ mod stabilis {
                 )
                 .as_non_fungible();
 
-            //Update the Cdp receipt to point to the marker receipt and get marked status
             self.cdp_manager.update_non_fungible_data(
                 &collateral_id,
                 "marker_id",
@@ -929,7 +1097,6 @@ mod stabilis {
             self.cdp_manager
                 .update_non_fungible_data(&collateral_id, "status", CdpStatus::Marked);
 
-            //Get the collateral ids for the collateral ratio that was newly calculated (which is different if working with pool units)
             let mut cdp_ids: Vec<NonFungibleLocalId> = Vec::new();
 
             if self
@@ -948,9 +1115,6 @@ mod stabilis {
                     .to_vec();
             }
 
-            //Save CDP if CR is high enough again after staking reward update, unless the collateral_ids vector is full
-            //Return the initial marker receipt if saving wasn't possible
-            //Or return a new marker receipt if saving was possible
             if (cr
                 > self
                     .collaterals
@@ -968,6 +1132,40 @@ mod stabilis {
             }
         }
 
+        /// Force liquidate a loan / CDP (liquidating without the loan being undercollateralized, but with a fee that should be beneficial for the borrower)
+        ///
+        /// # Input
+        /// - `collateral`: The collateral to be liquidated
+        /// - `payment`: The STAB tokens to pay back
+        /// - `percentage_to_take`: The percentage of the collateral value to take (if < 1, the borrower will profit off the liquidation)
+        /// - `assert_non_markable`: Whether to assert that the loan is not markable via normal means, which would be more profitable for the liquidator
+        ///
+        /// # Output
+        /// - The collateral returned
+        /// - The leftover STAB
+        ///
+        /// # Logic
+        /// - Get the CDP with lowest collateral ratio for the chosen collateral
+        /// - Remove the collateral ratio from the AvlTree
+        /// - Calculate latest collateral ratio
+        /// - Get liquidation collateral ratio
+        /// - Assert that the collateral ratio is high enough to force liquidate
+        ///    - If LCR > CR, the loan doesn't have to be forced, but can be liquidated via normal means
+        /// - Calculate percentage of collateral value vs. minted STAB
+        /// - Calculate how much of the loan can be liquidated, how much of the payment should be taken, and what the leftover STAB debt will then be
+        /// - Calculate new collateral amount
+        ///    - If CR is too low, not all collateral the liquidator wants to take can be taken, so the new_collateral_amount will be negative
+        ///    - Then we set the new_collateral_amount to 0
+        /// - If CR percentage is not > 100%, the entire loan must be liquidated
+        ///    - Otherwise we can be left with a loan that has debt but 0 collateral
+        /// - Take the payment and burn the STAB
+        /// - Update circulating STAB
+        /// - Take the collateral
+        /// - Calculate the new_collateral_amount again, because of potential rounding in take_collateral method (when working with assets with strange divisilibity)
+        /// - Update the CDP receipt
+        /// - If the new collateral amount is not 0, calculate the new collateral ratio, insert it into the AvlTree and update the CDP receipt
+        /// - If the loan was liquidated, update the CDP receipt to reflect this
+        /// - Return the collateral and the leftover STAB
         pub fn force_liquidate(
             &mut self,
             collateral: ResourceAddress,
@@ -985,8 +1183,7 @@ mod stabilis {
                 "Invalid STAB payment."
             );
 
-            //Get the CDP with lowest collateral ratio for the chosen collateral
-            let (_first_cr, collateral_ids) = self
+            let (_first_cr, collateral_ids, _next_key) = self
                 .collateral_ratios
                 .get_mut(&collateral)
                 .unwrap()
@@ -996,29 +1193,24 @@ mod stabilis {
             let collateral_id: NonFungibleLocalId = collateral_ids[0].clone();
             let data: Cdp = self.cdp_manager.get_non_fungible_data(&collateral_id);
 
-            //Remove the collateral ratio from the AvlTree
             self.remove_cr(
                 data.parent_address,
                 data.collateral_stab_ratio,
                 collateral_id.clone(),
             );
 
-            //Calculate latest collateral ratio
             let cr: Decimal = self.pool_to_real(
                 data.collateral_amount,
                 data.collateral,
                 data.is_pool_unit_collateral,
             ) / data.minted_stab;
 
-            //get liquidation collateral ratio
             let lcr: Decimal = self
                 .collaterals
                 .get(&collateral)
                 .unwrap()
                 .liquidation_collateral_ratio;
 
-            //assert that the collateral ratio is high enough to force liquidate:
-            //if cr < lcr the loan doesn't have to be forced, but can be liquidated via normal means.
             if assert_non_markable {
                 assert!(
                     cr > lcr,
@@ -1026,10 +1218,8 @@ mod stabilis {
                 );
             }
 
-            //calculate percentage of collateral value vs. minted stab
             let cr_percentage: Decimal = self.collaterals.get(&collateral).unwrap().mcr * cr / lcr;
 
-            //calculate how much of the loan can be liquidated, how much of the payment should be taken, and what the leftover stab debt will then be
             let (percentage_to_liquidate, payment_amount, new_stab_amount): (
                 Decimal,
                 Decimal,
@@ -1043,28 +1233,21 @@ mod stabilis {
                 ),
             };
 
-            //calculate new collateral amount
             let mut new_collateral_amount: Decimal = data.collateral_amount
                 - (data.collateral_amount * percentage_to_liquidate * percentage_to_take
                     / cr_percentage);
 
-            //if cr is too low, not all collateral the liquidator wants to take can be taken, so the new_collateral_amount will be negative
-            //then we set the new_collateral_amount to 0
             if new_collateral_amount < dec!(0) {
                 new_collateral_amount = dec!(0);
             }
 
-            //if cr percentage is not > 100%, the entire loan must be liquidated
-            //otherwise we can be left with a loan that has debt but 0 collateral
             assert!(
                 cr_percentage > dec!(1) || percentage_to_liquidate == dec!(1),
                 "CR < 100%. Entire loan must be liquidated",
             );
 
-            //take the payment and burn the STAB
             payment.take(payment_amount).burn();
 
-            //Update circulating STAB
             self.update_minted_stab(
                 false,
                 data.is_pool_unit_collateral,
@@ -1080,10 +1263,8 @@ mod stabilis {
                 data.collateral_amount - new_collateral_amount,
             );
 
-            //set this again, because of rounding in take_collateral method
             new_collateral_amount = data.collateral_amount - collateral_payment.amount();
 
-            //Update the Cdp receipt
             self.cdp_manager.update_non_fungible_data(
                 &collateral_id,
                 "collateral_amount",
@@ -1095,7 +1276,6 @@ mod stabilis {
                 new_stab_amount,
             );
 
-            //If the new collateral amount is not 0, calculate the new collateral ratio, insert it into the AvlTree and update the Cdp receipt
             if percentage_to_liquidate < dec!(1) {
                 let new_cr: Decimal = self.pool_to_real(
                     new_collateral_amount,
@@ -1116,7 +1296,6 @@ mod stabilis {
                     new_cr,
                 );
             } else {
-                //If the entire loan was liquidated, update the Cdp receipt to reflect this
                 self.cdp_manager.update_non_fungible_data(
                     &collateral_id,
                     "status",
@@ -1129,10 +1308,36 @@ mod stabilis {
                     .collateral_amount -= data.collateral_stab_ratio * data.minted_stab;
             }
 
-            //return the payment and the leftover STAB
             (collateral_payment, payment)
         }
 
+        /// Force mint STAB by adding collateral to a loan / CDP
+        ///
+        /// # Input
+        /// - `collateral`: The collateral to add
+        /// - `payment`: The STAB tokens to pay back
+        /// - `percentage_to_supply`: The percentage of the collateral value to supply (if > 1, the borrower will profit off the minting)
+        ///
+        /// # Output
+        /// - The minted STAB in a `Bucket`
+        /// - The leftover collateral in a `Bucket`
+        ///
+        /// # Logic
+        /// - Check if it is allowed to force mint right now
+        /// - Get the CDP with highest collateral ratio for the chosen collateral
+        /// - Check if the collateral is compatible
+        /// - Calculate minimum allowed collateral ratio
+        /// - Get collateral price
+        /// - Calculate constant k, which is the collateral needed for minting 1 STAB
+        /// - Calculate the max addition of collateral that can be supplied (see code for calculation and explanation)
+        /// - If too much collateral is supplied, remove the excess and put in bucket to return (handle potential rounding errors for strange divisilibity assets)
+        /// - Remove the current collateral ratio from the AvlTree
+        /// - Calculate newly minted STAB, new collateral amount and new collateral ratio
+        /// - Update circulating STAB
+        /// - Update the CDP receipt
+        /// - Insert the new collateral ratio into the AvlTree
+        /// - Mint the STAB
+        /// - Return the minted STAB and the leftover collateral
         pub fn force_mint(
             &mut self,
             collateral: ResourceAddress,
@@ -1149,13 +1354,12 @@ mod stabilis {
             let mut return_bucket: Option<Bucket> = None;
 
             {
-                //Get the CDP with highest collateral ratio for the chosen collateral
                 let collateral_ratios = self.collateral_ratios.get_mut(&collateral).unwrap();
                 let range = collateral_ratios.range_back(
                     dec!(0)..(self.collaterals.get(&collateral).unwrap().highest_cr + dec!(1)),
                 );
 
-                'outer_loop: for (_cr, collateral_ids) in range {
+                'outer_loop: for (_cr, collateral_ids, _next_key) in range {
                     for found_collateral_id in collateral_ids {
                         data = Some(self.cdp_manager.get_non_fungible_data(&found_collateral_id));
                         if data.as_ref().unwrap().collateral == payment.resource_address() {
@@ -1175,7 +1379,6 @@ mod stabilis {
             let pool_to_real: Decimal =
                 self.pool_to_real(dec!(1), data.collateral, data.is_pool_unit_collateral);
 
-            //calculate minimum allowed collateral ratio
             let min_collateral_ratio: Decimal = self.parameters.force_mint_cr_multiplier
                 * self
                     .collaterals
@@ -1183,10 +1386,8 @@ mod stabilis {
                     .unwrap()
                     .liquidation_collateral_ratio;
 
-            //get collateral price
             let collateral_price: Decimal = self.collaterals.get(&collateral).unwrap().usd_price;
 
-            //calculate constant k, which is the collateral needed for minting 1 STAB
             let k: Decimal = (self.internal_stab_price) / (pool_to_real * collateral_price)
                 * percentage_to_supply;
 
@@ -1203,9 +1404,6 @@ mod stabilis {
                     - min_collateral_ratio * data.minted_stab))
                 / (min_collateral_ratio - k * pool_to_real);
 
-            //if too much collateral is supplied, remove the excess and put in bucket to return
-            //note RoundingMode is set to round away from zero
-            //if we take too little collateral by rounding down (to zero), we will go below the minimum collateral ratio, by providing too much collateral to mint STAB with. So it's better to return too much.
             if payment.amount() > max_addition {
                 return_bucket = Some(payment.take_advanced(
                     payment.amount() - max_addition,
@@ -1213,14 +1411,12 @@ mod stabilis {
                 ));
             }
 
-            //Remove the current collateral ratio from the AvlTree
             self.remove_cr(
                 data.parent_address,
                 data.collateral_stab_ratio,
                 collateral_id.clone(),
             );
 
-            //calculate newly minted stab, new collateral amount and new collateral ratio
             let new_minted_stab: Decimal = data.minted_stab + payment.amount() / k;
             let new_collateral_amount: Decimal = data.collateral_amount + payment.amount();
 
@@ -1235,7 +1431,6 @@ mod stabilis {
                 .unwrap()
                 .collateral_amount += (new_cr - data.collateral_stab_ratio) * data.minted_stab;
 
-            //Update the Cdp receipt accordingly
             self.cdp_manager.update_non_fungible_data(
                 &collateral_id,
                 "minted_stab",
@@ -1252,13 +1447,10 @@ mod stabilis {
                 new_cr,
             );
 
-            //Insert the new collateral ratio into the AvlTree
             self.insert_cr(data.parent_address, new_cr, collateral_id.clone());
 
-            //Mint the STAB
             let stab_tokens: Bucket = self.stab_manager.mint(payment.amount() / k);
 
-            //Update circulating STAB
             self.update_minted_stab(
                 false,
                 data.is_pool_unit_collateral,
@@ -1268,13 +1460,31 @@ mod stabilis {
                 data.collateral,
             );
 
-            //put the collateral in the correct vault
             self.put_collateral(data.collateral, data.is_pool_unit_collateral, payment);
 
-            //return the minted STAB and the leftover collateral
             (stab_tokens, return_bucket)
         }
 
+        /// Liquidate a marked loan / CDP, using a marker receipt
+        ///
+        /// # Input
+        /// - `marker_id`: The marker receipt id
+        /// - `payment`: The STAB tokens to pay back
+        ///
+        /// # Output, depends on outcome:
+        /// 1: liquidation successful
+        /// - The collateral reward
+        /// - The leftover STAB
+        /// - A liquidation receipt
+        /// 2: liquidation unsuccessful (because the loan was saved):
+        /// - The STAB tokens
+        /// - None
+        /// - A liquidation receipt (with saved status)
+        ///
+        /// # Logic
+        /// - Get the marker receipt and data
+        /// - Get the CDP data according to the marker receipt
+        /// - Try to liquidate the CDP, using the try_liquidate method (see that method for more details)
         pub fn liquidate_position_with_marker(
             &mut self,
             marker_id: NonFungibleLocalId,
@@ -1290,7 +1500,6 @@ mod stabilis {
                 .cdp_manager
                 .get_non_fungible_data(&marker_data.marked_id);
 
-            //Try to liquidate the CDP, returns liquidation rewards or receipt for saving the CDP
             self.try_liquidate(
                 payment,
                 cdp_data,
@@ -1300,24 +1509,48 @@ mod stabilis {
             )
         }
 
+        /// Liquidate a marked loan / CDP, without a marker receipt
+        ///
+        /// # Input
+        /// - `marker_id`: The marker receipt id
+        /// - `payment`: The STAB tokens to pay back
+        ///
+        /// # Output, depends on outcome:
+        /// 1: liquidation successful
+        /// - The collateral reward
+        /// - The leftover STAB
+        /// - A liquidation receipt
+        /// 2: liquidation unsuccessful (because the loan was saved):
+        /// - The STAB tokens
+        /// - None
+        /// - A liquidation receipt (with saved status)
+        ///
+        /// # Logic
+        /// - Get the CDP to be liquidated:
+        ///   - If automatic is true, find the next to-be liquidated CDP, skipping over the amount of CDPs specified by the skip parameter.
+        ///     - If no CDPs are found, panic.
+        ///     - If too many CDPs are skipped, panic.
+        ///   - If automatic is false, use the CDP receipt specified by the cdp_id parameter.
+        /// - Get the marker receipt through the CDP data
+        /// - Try to liquidate the CDP, using the try_liquidate method (see that method for more details)
         pub fn liquidate_position_without_marker(
             &mut self,
             payment: Bucket,
-            automatic: bool,
-            skip: i64,
+            skip: Option<i64>,
             cdp_id: NonFungibleLocalId,
         ) -> (Bucket, Option<Bucket>, Bucket) {
             assert!(
                 payment.resource_address() == self.stab_manager.address(),
                 "Invalid STAB payment."
             );
-            //Finding the next to-be liquidated CDP, skipping over the amount of CDPs specified by the skip parameter
             let mut collateral_id: NonFungibleLocalId = cdp_id;
             let mut skip_counter: i64 = 0;
             let mut found: bool = false;
 
-            if automatic {
-                for (_identifier, found_collateral_id) in self.marked_cdps.range(dec!(0)..) {
+            if let Some(skip) = skip {
+                for (_identifier, found_collateral_id, _next_key) in
+                    self.marked_cdps.range(dec!(0)..)
+                {
                     collateral_id = found_collateral_id.clone();
                     skip_counter += 1;
                     if (skip_counter - 1) == skip {
@@ -1342,7 +1575,6 @@ mod stabilis {
 
             let marker_id: NonFungibleLocalId = NonFungibleLocalId::integer(cdp_data.marker_id);
 
-            //Try to liquidate the CDP, returns liquidation rewards or receipt for saving the CDP
             self.try_liquidate(
                 payment,
                 cdp_data,
@@ -1352,6 +1584,7 @@ mod stabilis {
             )
         }
 
+        /// Changes the price of a collateral, which will also update the liquidation collateral ratio
         pub fn change_collateral_price(&mut self, collateral: ResourceAddress, new_price: Decimal) {
             let mcr: Decimal = self.collaterals.get_mut(&collateral).unwrap().mcr;
             self.collaterals.get_mut(&collateral).unwrap().usd_price = new_price;
@@ -1361,6 +1594,7 @@ mod stabilis {
                 .liquidation_collateral_ratio = mcr * (self.internal_stab_price / new_price);
         }
 
+        /// Add a possible collateral to the protocol
         pub fn add_collateral(
             &mut self,
             address: ResourceAddress,
@@ -1390,6 +1624,11 @@ mod stabilis {
             self.collaterals.insert(address, info);
         }
 
+        /// Add a possible pool collateral to the protocol
+        ///   - pool collaterals are collaterals are some kind of pool unit (such as LSUs), with an underlying asset that is already a collateral
+        ///       - the collateral amount is calculated when a loan is opened and interacted with, so not continuously updated
+        ///          - this means that sometimes a loan can be liquidated, but when interacting with it, the collateral amount is updated so it can't be anymore
+        ///             - this results in the loan being saved
         pub fn add_pool_collateral(
             &self,
             address: ResourceAddress,
@@ -1428,11 +1667,12 @@ mod stabilis {
             self.pool_units.insert(address, info);
         }
 
+        /// Changes the internal price of the STAB token
         pub fn change_internal_price(&mut self, new_price: Decimal) {
             self.internal_stab_price = new_price;
         }
 
-        //emptying the treasury of a collateral, error_fallback exists if a pool unit is also in self.collaterals
+        ///Emptying the treasury of a collateral, error_fallback exists if a pool unit is also in self.collaterals
         pub fn empty_collateral_treasury(
             &mut self,
             amount: Decimal,
@@ -1456,10 +1696,12 @@ mod stabilis {
             }
         }
 
+        /// Mint a controller badge
         pub fn mint_controller_badge(&self, amount: Decimal) -> Bucket {
             self.controller_badge_manager.mint(amount)
         }
 
+        /// Edit a collateral's parameters
         pub fn edit_collateral(
             &mut self,
             address: ResourceAddress,
@@ -1472,6 +1714,7 @@ mod stabilis {
             self.collaterals.get_mut(&address).unwrap().max_stab_share = new_max_share;
         }
 
+        /// Edit a pool collateral's parameters
         pub fn edit_pool_collateral(
             &mut self,
             address: ResourceAddress,
@@ -1482,14 +1725,17 @@ mod stabilis {
             self.pool_units.get_mut(&address).unwrap().max_pool_share = new_max_share;
         }
 
+        /// Set delay until a loan can be liquidated after marking (in minutes)
         pub fn set_liquidation_delay(&mut self, new_delay: i64) {
             self.parameters.liquidation_delay = new_delay;
         }
 
+        /// Set delay until a loan can be liquited without marker, after it could be liquidated with a marker (in minutes)
         pub fn set_unmarked_delay(&mut self, new_delay: i64) {
             self.parameters.unmarked_delay = new_delay;
         }
 
+        /// Set availability of liquidations, openings, closings, force minting and force liquidations
         pub fn set_stops(
             &mut self,
             liquidations: bool,
@@ -1505,31 +1751,41 @@ mod stabilis {
             self.parameters.stop_force_mint = force_mint;
         }
 
+        /// Set the maximum vector length for the collateral ratios (to prevent state explosion, vectors are non-lazily loaded)
         pub fn set_max_vector_length(&mut self, new_max_length: u64) {
             self.parameters.max_vector_length = new_max_length;
         }
 
+        /// Set the minimum mintable amount of STAB (to prevent unprofitable liquidations)
         pub fn set_minimum_mint(&mut self, new_minimum_mint: Decimal) {
             self.parameters.minimum_mint = new_minimum_mint;
         }
 
+        /// Set fines for being liquidated (for liquidators and the protocol)
+        ///   - a liquidator fine of 0.05 and protocol fine of 0.03 would mean a liquidation would result in 1 + 0.05 + 0.03 = 1.08 times the minted STAB's value collateral being taken from the borrower. 
         pub fn set_fines(&mut self, liquidator_fine: Decimal, stabilis_fine: Decimal) {
             self.parameters.liquidation_liquidation_fine = liquidator_fine;
             self.parameters.stabilis_liquidation_fine = stabilis_fine;
         }
 
+        /// Set the force mint multiplier
+        ///   - multiplier is used to calculate the minimum collateral ratio that will ever be reached through force minting
+        ///       - a multiplier of 2, and an mcr of 1.5 would mean the lowest collateralization ratio reached by forced minting would be 300%
         pub fn set_force_mint_multiplier(&mut self, new_multiplier: Decimal) {
             self.parameters.force_mint_cr_multiplier = new_multiplier;
         }
 
+        /// Gets the internal price of the STAB token
         pub fn return_internal_price(&self) -> Decimal {
             self.internal_stab_price
         }
 
+        /// Mints free STAB (used by the flash loan component, for instance)
         pub fn free_stab(&mut self, amount: Decimal) -> Bucket {
             self.stab_manager.mint(amount)
         }
 
+        /// Burns STAB
         pub fn burn_stab(&mut self, bucket: Bucket) {
             assert!(
                 bucket.resource_address() == self.stab_manager.address(),
@@ -1538,6 +1794,7 @@ mod stabilis {
             bucket.burn();
         }
 
+        /// Burns a used marker
         pub fn burn_marker(&self, marker: Bucket) {
             let data: CdpMarker = marker.as_non_fungible().non_fungible().data();
             assert!(
@@ -1548,6 +1805,7 @@ mod stabilis {
             marker.burn();
         }
 
+        /// Burns a used loan receipt (has to be liquidated, closed or force liquidated, and have no collateral left)
         pub fn burn_loan_receipt(&self, receipt: Bucket) {
             let data: Cdp = receipt.as_non_fungible().non_fungible().data();
             assert!(
@@ -1569,6 +1827,30 @@ mod stabilis {
 
         //HELPER METHODS
 
+        /// Try to liquidate a CDP / loan
+        ///
+        /// # Input
+        /// - `payment`: The STAB tokens to pay back
+        /// - `cdp_data`: The CDP data
+        /// - `marker_data`: The marker data
+        /// - `marker_id`: The marker receipt id
+        /// - `delay`: The delay until the loan can be liquidated from when it was marked
+        ///
+        /// # Output, depends on outcome:
+        /// 1: liquidation successful
+        /// - The collateral reward
+        /// - The leftover STAB
+        /// - A liquidation receipt
+        /// 2: liquidation unsuccessful (because the loan was saved):
+        /// - The STAB tokens
+        /// - None
+        /// - A liquidation receipt (with saved status)
+        ///
+        /// # Logic
+        /// - Get the liquidation collateral ratio
+        /// - Assert that liquidation is currently enabled, the marker is valid, the payment is sufficient, the time has passed, and the loan is marked
+        /// - Get the newest collateral ratio for the CDP
+        /// - Check whether the collateral ratio is sufficient, liquidate if not, save if it is
         fn try_liquidate(
             &mut self,
             payment: Bucket,
@@ -1577,14 +1859,12 @@ mod stabilis {
             marker_id: NonFungibleLocalId,
             delay: i64,
         ) -> (Bucket, Option<Bucket>, Bucket) {
-            //get cr where liquidation can occur
             let liquidation_collateral_ratio = self
                 .collaterals
                 .get(&cdp_data.parent_address)
                 .unwrap()
                 .liquidation_collateral_ratio;
 
-            //assert liquidation is currently enabled, the marker is valid, the payment is sufficient, the time has passed, and the loan is marked
             assert!(
                 !self.parameters.stop_liquidations,
                 "Not allowed to liquidate loans right now."
@@ -1608,14 +1888,12 @@ mod stabilis {
 
             assert!(cdp_data.status == CdpStatus::Marked, "Loan not marked");
 
-            //get newest cr
             let cr: Decimal = self.pool_to_real(
                 cdp_data.collateral_amount,
                 cdp_data.collateral,
                 cdp_data.is_pool_unit_collateral,
             ) / cdp_data.minted_stab;
 
-            //check whether cr is sufficient, liquidate if not, save if it is
             if cr < liquidation_collateral_ratio {
                 let (liquidation_payment, remainder, receipt): (Bucket, Bucket, Bucket) =
                     self.liquidate(payment, marker_data, marker_id, cdp_data, cr);
@@ -1626,6 +1904,33 @@ mod stabilis {
             }
         }
 
+        /// Liquidate a loan / CDP
+        ///
+        /// # Input
+        /// - `payment`: The STAB tokens to pay back
+        /// - `marker_data`: The marker data
+        /// - `marker_id`: The marker receipt id
+        /// - `cdp_data`: The CDP data
+        /// - `cr`: The collateral ratio
+        ///
+        /// # Output
+        /// - The collateral reward
+        /// - The leftover STAB
+        /// - A liquidation receipt
+        ///
+        /// # Logic
+        /// - Update minted STAB
+        /// - Update collateral amount of the parent address
+        /// - Calculate the minimum collateral ratio and the liquidation collateral ratio
+        /// - Create the liquidation receipt data
+        /// - Update the marker and CDP receipts
+        /// - Take the payment, check whether it's enough, and burn it
+        /// - Calculate the liquidations according to the cr
+        ///    - for calculation details, see code
+        /// - Make the liquidation receipt
+        /// - Handle calculated liquidations
+        /// - Update liquidated cdp
+        /// - Return the collateral reward, the leftover STAB and the liquidation receipt
         fn liquidate(
             &mut self,
             mut payment: Bucket,
@@ -1634,7 +1939,6 @@ mod stabilis {
             cdp_data: Cdp,
             cr: Decimal,
         ) -> (Bucket, Bucket, Bucket) {
-            //update minted stab
             self.update_minted_stab(
                 false,
                 cdp_data.is_pool_unit_collateral,
@@ -1649,7 +1953,6 @@ mod stabilis {
                 .unwrap()
                 .collateral_amount -= cdp_data.collateral_stab_ratio * cdp_data.minted_stab;
 
-            //set some variables that will be used, and create liq. receipt structure
             let mcr: Decimal = self.collaterals.get(&cdp_data.parent_address).unwrap().mcr;
             let liq_cr: Decimal = self
                 .collaterals
@@ -1669,7 +1972,6 @@ mod stabilis {
 
             self.liquidation_counter += 1;
 
-            //update the marker and cdp receipts
             self.marked_cdps.remove(&marker_data.marker_placing);
             self.marked_cdps_active -= 1;
             self.cdp_marker_manager
@@ -1680,7 +1982,6 @@ mod stabilis {
                 CdpStatus::Liquidated,
             );
 
-            //take the payment, check whether it's enough, and burn it
             assert!(
                 cdp_data.minted_stab <= payment.amount(),
                 "Not enough STAB to liquidate."
@@ -1723,7 +2024,6 @@ mod stabilis {
                 liquidation_payment_amount = cdp_data.collateral_amount;
             }
 
-            //make liq. receipt
             let receipt: NonFungibleBucket = self
                 .liquidation_receipt_manager
                 .mint_non_fungible(
@@ -1732,7 +2032,6 @@ mod stabilis {
                 )
                 .as_non_fungible();
 
-            //handle calculated liquidations
             let treasury_payment = if let Some(payment_amount) = treasury_payment_amount {
                 Some(self.take_collateral(
                     cdp_data.collateral,
@@ -1755,7 +2054,6 @@ mod stabilis {
                     .as_ref()
                     .map_or(dec!(0), |payment_bucket| payment_bucket.amount());
 
-            //update liquidated cdp
             self.cdp_manager.update_non_fungible_data(
                 &marker_data.marked_id,
                 "collateral_amount",
@@ -1773,13 +2071,30 @@ mod stabilis {
             (liquidation_payment, payment, receipt.into())
         }
 
+        /// Save a loan / CDP
+        ///
+        /// # Input
+        /// - `marker_data`: The marker data
+        /// - `cdp_data`: The CDP data
+        /// - `cr`: The collateral ratio
+        ///
+        /// # Output
+        /// - A bucket with the liquidation receipt (a receipt specifying the loan was saved)
+        ///
+        /// # Logic
+        /// - Update the collateral amount of the parent address
+        /// - Create a marker for the savior
+        /// - Create a liquidation receipt with saved status
+        /// - Update the CDP to a healthy state and collateral ratio
+        /// - Update the marker receipt to used
+        /// - Insert the healthy CDP again
+        /// - Return the liquidation receipt
         fn save(&mut self, marker_data: CdpMarker, cdp_data: Cdp, cr: Decimal) -> Bucket {
             self.collaterals
                 .get_mut(&cdp_data.parent_address)
                 .unwrap()
                 .collateral_amount += (cr - cdp_data.collateral_stab_ratio) * cdp_data.minted_stab;
 
-            //create marker for savior
             self.marker_placing_counter += dec!(1);
             self.cdp_marker_counter += 1;
 
@@ -1799,7 +2114,6 @@ mod stabilis {
                 )
                 .as_non_fungible();
 
-            //update state to healthy cdp, both marked_cdps and the cdp itself
             self.marked_cdps.remove(&marker_data.marker_placing);
             self.marked_cdps_active -= 1;
             self.cdp_manager.update_non_fungible_data(
@@ -1818,12 +2132,12 @@ mod stabilis {
                 true,
             );
 
-            //insert the healthy cdp again
             self.insert_cr(cdp_data.parent_address, cr, marker_data.marked_id.clone());
 
             marker_receipt.into()
         }
 
+        /// Insert a collateral ratio into the AvlTree
         fn insert_cr(
             &mut self,
             parent_address: ResourceAddress,
@@ -1870,6 +2184,7 @@ mod stabilis {
             }
         }
 
+        /// Remove a collateral ratio from the AvlTree
         fn remove_cr(
             &mut self,
             parent_address: ResourceAddress,
@@ -1899,6 +2214,8 @@ mod stabilis {
             }
         }
 
+        /// Calculate the real value of a pool collateral, if it is a pool unit
+        ///    - Example: a resource is an LSU, 1 LSU = 1.1 XRD. If the collateral amount is 10 LSU, 11 XRD is returned.
         fn pool_to_real(
             &mut self,
             amount: Decimal,
@@ -1926,6 +2243,7 @@ mod stabilis {
             }
         }
 
+        /// Check whether a collateral's share is too big
         fn check_share(
             &mut self,
             parent_collateral_address: ResourceAddress,
@@ -1966,6 +2284,7 @@ mod stabilis {
             }
         }
 
+        /// Update minted STAB
         fn update_minted_stab(
             &mut self,
             add: bool,
@@ -1994,6 +2313,7 @@ mod stabilis {
             }
         }
 
+        /// Take collateral out of the correct vault
         fn take_collateral(
             &mut self,
             collateral: ResourceAddress,
@@ -2015,6 +2335,7 @@ mod stabilis {
             }
         }
 
+        /// Put collateral in the correct vault
         fn put_collateral(
             &mut self,
             collateral: ResourceAddress,
@@ -2038,6 +2359,7 @@ mod stabilis {
             &mut self.collaterals
         }
 
+        /// Put collateral in the treasury
         fn put_collateral_in_treasury(
             &mut self,
             collateral: ResourceAddress,
@@ -2061,4 +2383,52 @@ mod stabilis {
             &mut self.collaterals
         }
     }
+}
+
+#[derive(ScryptoSbor)]
+/// All info about a collateral used by the protocol
+pub struct CollateralInfo {
+
+    pub mcr: Decimal,
+    pub usd_price: Decimal,
+    pub liquidation_collateral_ratio: Decimal,
+    pub vault: Vault,
+    pub resource_address: ResourceAddress,
+    pub treasury: Vault,
+    pub accepted: bool,
+    pub initialized: bool,
+    pub max_stab_share: Decimal,
+    pub minted_stab: Decimal,
+    pub collateral_amount: Decimal,
+    pub highest_cr: Decimal,
+}
+
+#[derive(ScryptoSbor)]
+pub struct PoolUnitInfo {
+    pub vault: Vault,
+    pub treasury: Vault,
+    pub lsu: bool,
+    pub validator: Option<Global<Validator>>,
+    pub one_resource_pool: Option<Global<OneResourcePool>>,
+    pub parent_address: ResourceAddress,
+    pub address: ResourceAddress,
+    pub accepted: bool,
+    pub minted_stab: Decimal,
+    pub max_pool_share: Decimal,
+}
+
+#[derive(ScryptoSbor)]
+pub struct ProtocolParameters {
+    pub minimum_mint: Decimal,
+    pub max_vector_length: u64,
+    pub liquidation_delay: i64,
+    pub unmarked_delay: i64,
+    pub liquidation_liquidation_fine: Decimal,
+    pub stabilis_liquidation_fine: Decimal,
+    pub stop_liquidations: bool,
+    pub stop_openings: bool,
+    pub stop_closings: bool,
+    pub stop_force_mint: bool,
+    pub stop_force_liquidate: bool,
+    pub force_mint_cr_multiplier: Decimal,
 }

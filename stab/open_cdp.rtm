@@ -13,20 +13,14 @@ CALL_METHOD
 TAKE_FROM_WORKTOP 
     Address("resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3") # XRD address
     Decimal("1000") 
-    Bucket("collateral_bucket");
-
-CALL_METHOD
-    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
-    "create_proof_of_amount"
-    Address("resource_sim1th0fzfanrvjucld6yr798c52zxcpmcvz9aqmm75t2r9kzzwylqh6q0")
-    Decimal("0.75");
+    Bucket("xrd_bucket");
 
 CALL_METHOD    
-    Address("component_sim1cpwu4wc6rg0am8l9prnh2lzqkk6hue6stzqhdx48rzvek2mmm5vp0p")
+    Address("component_sim1czm2m3e8nmsdsa0s0n2d3ykqqcgksm22yxk97792v2cgrcz6ykd2p6") #proxy comp address
     "open_cdp"
-    Bucket("collateral_bucket")
+    Bucket("xrd_bucket")
 	Decimal("20")
-;
+	false;
 
 CALL_METHOD
     Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 

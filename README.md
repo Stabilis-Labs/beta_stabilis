@@ -32,7 +32,7 @@ The DAO (ILIS) module governs the Stabilis protocol and can potentially control 
 
 2. **Governance Component**: Handles proposal creation, voting, and execution. It holds badges to authorize method calls suggested in proposals.
 
-3. **Staking Component**: Allows users to stake tokens to receive governance tokens and participate in voting.
+3. **Staking Component**: Allows users to stake any accepted token to a Staking ID NFT to receive governance tokens as a reward. Staking the protocol's governance tokens (ILIS) allows using the Staking ID NFT to vote on proposals.
 
 4. **ReentrancyProxy Component**: Facilitates method calls that require reentrancy, which is challenging in the Radix Engine.
 

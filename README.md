@@ -1,4 +1,4 @@
-# Stabilis Protocol Package
+# Stabilis Protocol
 
 The Stabilis protocol is a decentralized system for creating and managing a stablecoin called STAB, governed by a DAO (Decentralized Autonomous Organization). The protocol consists of two main parts: the STAB module and the DAO (ILIS) module.
 
@@ -22,7 +22,6 @@ The STAB module is responsible for creating and managing the STAB token. It cons
 - Liquidation process (marking, liquidating, retrieving leftover collateral)
 - Interest rate adjustment using a PID controller to maintain the STAB peg
 - Collateral price updates from oracles
-- Updating STAB's internal price based on STAB's demand and supply
 
 ## DAO (ILIS) Module
 
@@ -169,5 +168,3 @@ graph TD
     class DAO,Staking,Gov,Reent,LBP dao;
 
 ```
-
-This diagram illustrates the complete Stabilis protocol, showing how the STAB module and the DAO (ILIS) module are interconnected. The Governance module of the DAO can authorize method calls on the Proxy module, allowing the DAO to control and update the STAB module as needed.

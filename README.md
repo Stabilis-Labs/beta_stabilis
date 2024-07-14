@@ -67,7 +67,7 @@ To deploy the STAB module, follow these steps:
 
 After these steps, the STAB module of the system will be fully deployed. Here's a diagram representing the STAB module components and their interactions:
 
-<antArtifact identifier="proxy-module-architecture" type="application/vnd.ant.mermaid" title="Proxy Module System Architecture Diagram">
+```mermaid
 graph TD
     STAB[STAB Module]
     Oracle[Oracle Module]
@@ -88,7 +88,7 @@ graph TD
     classDef stablecoin fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c;
     
     class STAB,Oracle,Proxy,Flash,LP stablecoin;
-
+```
 
 ## Deploying the DAO (ILIS) Module
 
@@ -173,10 +173,3 @@ graph TD
 ```
 
 This diagram illustrates the complete Stabilis protocol, showing how the STAB module and the DAO (ILIS) module are interconnected. The Governance module of the DAO can authorize method calls on the Proxy module, allowing the DAO to control and update the STAB module as needed.
-
-By following these deployment steps and understanding the relationships between components, you can successfully set up the entire Stabilis protocol.
-</antArtifact>
-
-This new section provides a clear, step-by-step explanation of how to deploy the Stabilis protocol, including both the STAB and DAO (ILIS) modules. It includes the requested diagrams to visually represent each stage of the deployment process and the final interconnected system.
-
-Is there anything else you'd like me to add or modify in this deployment explanation?

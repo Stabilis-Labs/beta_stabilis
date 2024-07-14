@@ -1,0 +1,49 @@
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd") #Primary account 
+    "withdraw"
+    Address("{control_badge}") # ctrl badge address
+    Decimal("2");
+
+TAKE_FROM_WORKTOP 
+    Address("{control_badge}") # ctrl badge address
+    Decimal("2") 
+    Bucket("badge_bucket");
+	
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd") #Primary account 
+    "withdraw"
+    Address("resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc") # xrd address
+    Decimal("500");
+
+TAKE_FROM_WORKTOP 
+    Address("resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc") # xrd address
+    Decimal("500") 
+    Bucket("xrd_bucket");
+	
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd") #Primary account 
+    "withdraw"
+    Address("{stab_address}") # stab address
+    Decimal("20");
+
+TAKE_FROM_WORKTOP 
+    Address("{stab_address}") # stab address
+    Decimal("20") 
+    Bucket("stab_bucket");
+
+CALL_FUNCTION
+    Address("{proxy_pack}") #package address
+    "Proxy"
+    "new"
+	Bucket("xrd_bucket")
+	Bucket("stab_bucket")
+	Bucket("badge_bucket")
+	Address("{loan_receipt_address}") #CDP Receipt Address
+	Address("{marker_receipt_address}") #marker receipt address
+	Address("{oracle_comp}") #oracle comp address
+	;
+	
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

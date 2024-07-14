@@ -1,0 +1,13 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000");
+
+CALL_METHOD    
+    Address("component_sim1czm2m3e8nmsdsa0s0n2d3ykqqcgksm22yxk97792v2cgrcz6ykd2p6") #proxy comp address
+    "update";
+	
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

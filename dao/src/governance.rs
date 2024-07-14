@@ -1,25 +1,80 @@
-use crate::bootstrap::bootstrap::*;
+//! # DAO Governance Blueprint
+//!
+//! Can be used to build and submit proposals, vote on them, and execute them.
+//!
+//! Proposals work through ProposalSteps, which hold information about a step in a proposal and include a method call.
+//! A proposer can build proposals by adding steps to them, and when finishing, submitting this proposal. Proposers can use their Proposal Receipts for this.
+//! After submitting a proposal, user's can vote on it using their Staking IDs, locking their staked governance tokens for the duration of the vote.
+//! After the voting period has passed, the proposal can be executed, which will execute all steps in the proposal one by one.
+//! Calling methods on the Governance component itself needs to happen through the ReentrancyProxy component, as the Radix Engine does not support reentrancy.
+
+use crate::reentrancy::reentrancy::*;
 use crate::staking::staking::*;
-use crate::structs::*;
 use scrypto::prelude::*;
+
+/// Proposal structure, holding all information about a proposal in the governance component.
+#[derive(ScryptoSbor)]
+pub struct Proposal {
+    pub title: String,
+    pub description: String,
+    pub steps: Vec<ProposalStep>,
+    pub votes_for: Decimal,
+    pub votes_against: Decimal,
+    pub votes: KeyValueStore<NonFungibleLocalId, Decimal>,
+    pub deadline: Instant,
+    pub next_index: i64,
+    pub status: ProposalStatus,
+    pub reentrancy: bool,
+}
+
+/// Proposal receipt structure, minted when a user wants to propose a new proposal, usable to update the proposal and submit it.
+/// After the proposal is accepted, the receipt is redeemable for the fee paid.
+#[derive(ScryptoSbor, NonFungibleData)]
+pub struct ProposalReceipt {
+    #[mutable]
+    pub fee_paid: Decimal,
+    #[mutable]
+    pub proposal_id: u64,
+    #[mutable]
+    pub status: ProposalStatus,
+}
+
+/// Proposal step structure, holding information about a step in a proposal.
+#[derive(ScryptoSbor)]
+pub struct ProposalStep {
+    pub component: ComponentAddress,
+    pub badge: ResourceAddress,
+    pub method: String,
+    pub args: ScryptoValue,
+    pub return_bucket: bool,
+    pub reentrancy: bool,
+}
+
+/// ProposalStatus enum, holding all possible statuses of a proposal.
+#[derive(ScryptoSbor, PartialEq, Clone, Copy)]
+pub enum ProposalStatus {
+    Building,
+    Ongoing,
+    Rejected,
+    Accepted,
+    Executed,
+    Finished,
+}
+
+/// GovernanceParameters structure, holding all parameters of the governance component.
+#[derive(ScryptoSbor)]
+pub struct GovernanceParameters {
+    pub fee: Decimal,
+    pub proposal_duration: i64,
+    pub quorum: Decimal,
+    pub approval_threshold: Decimal,
+}
 
 #[blueprint]
 mod governance {
     enable_method_auth! {
         methods {
             put_tokens => PUBLIC;
-            send_tokens => restrict_to: [OWNER];
-            employ => restrict_to: [OWNER];
-            fire => restrict_to: [OWNER];
-            airdrop_tokens => restrict_to: [OWNER];
-            airdrop_staked_tokens => restrict_to: [OWNER];
-            set_parameters => restrict_to: [OWNER];
-            post_announcement => restrict_to: [OWNER];
-            remove_announcement => restrict_to: [OWNER];
-            set_update_reward => restrict_to: [OWNER];
-            set_proxy_component => restrict_to: [OWNER];
-            set_staking_component => restrict_to: [OWNER];
-            send_salary_to_employee => PUBLIC;
             create_proposal => PUBLIC;
             add_proposal_step => PUBLIC;
             submit_proposal => PUBLIC;
@@ -27,107 +82,78 @@ mod governance {
             finish_voting => PUBLIC;
             execute_proposal_step => PUBLIC;
             retrieve_fee => PUBLIC;
-            rewarded_update => PUBLIC;
-            finish_bootstrap => restrict_to: [OWNER];
+            finish_reentrancy_step => restrict_to: [OWNER];
+            send_tokens => restrict_to: [OWNER];
+            set_parameters => restrict_to: [OWNER];
+            set_staking_component => restrict_to: [OWNER];
         }
     }
 
     struct Governance {
+        /// The staking component, used to get voting information from
         staking: Global<Staking>,
-        bootstrap: Global<LinearBootstrapPool>,
+        /// The reentrancy component, used to execute ProposalSteps that require reentrancy
+        reentrancy: Global<ReentrancyProxy>,
+        /// The address of the mother token (the governance token)
         mother_token_address: ResourceAddress,
+        /// The address of the mother pool token, used to represent staked mother tokens
+        mother_pool_token_address: ResourceAddress,
+        /// The vault holding the fee paid for proposals
         proposal_fee_vault: Vault,
+        /// Resource manager for proposal receipts
         proposal_receipt_manager: ResourceManager,
+        /// KVS holding all vaults, indexed by their address (these vaults should contain badges used for authorizing proposal steps)
         vaults: KeyValueStore<ResourceAddress, Vault>,
-        payments: KeyValueStore<ComponentAddress, Decimal>,
+        /// KVS holding all proposals, indexed by their ID
         proposals: KeyValueStore<u64, Proposal>,
-        text_announcements: KeyValueStore<u64, String>,
-        text_announcement_counter: u64,
+        /// Counter for the proposal IDs
         proposal_counter: u64,
+        /// Governance parameters
         parameters: GovernanceParameters,
+        /// The address of Staking IDs, which are used to vote on proposals
         voting_id_address: ResourceAddress,
-        last_staking_update: Instant,
-        daily_update_reward: Decimal,
-        proxy: Global<AnyComponent>,
+        /// The address of the controller badge, used to authorize owner methods
         controller_badge_address: ResourceAddress,
-        payment_locker: Global<AccountLocker>,
-        employees: KeyValueStore<Global<Account>, (Job, Instant)>,
+        /// The address of the component
+        component_address: ComponentAddress,
     }
 
     impl Governance {
-        pub fn instantiate_dao(
-            founder_allocation: Decimal,
-            bootstrap_allocation: Decimal,
-            staking_allocation: Decimal,
-            controller_badge: Bucket,
-            proxy_component: ComponentAddress,
+        /// Instantiates a new Governance component.
+        ///
+        /// # Input
+        /// - `controller_badge`: Badge to use for the controller badge vault, allowing access to owner methods
+        /// - `protocol_name`: Name of the protocol
+        /// - `protocol_token_symbol`: Symbol of the protocol token
+        /// - `proposal_receipt_icon_url`: URL of the icon for the proposal receipt
+        /// - `staking`: Staking component to use for voting
+        /// - `mother_token_address`: Address of the mother (governance) token
+        /// - `mother_pool_token_address`: Address of the mother pool token
+        /// - `voting_id_address`: Address of the Staking IDs
+        ///
+        /// # Output
+        /// - `Global<Governance>`: The newly instantiated Governance component
+        ///
+        /// # Logic
+        /// - Instantiates a reentrancy component,
+        /// - Instantiates a new Governance component with the given parameters
+        pub fn instantiate_governance(
+            mut controller_badge: Bucket,
             protocol_name: String,
-            protocol_token_supply: Decimal,
             protocol_token_symbol: String,
-            protocol_token_icon_url: Url,
             proposal_receipt_icon_url: Url,
-            bootstrap_resource1: Bucket,
-        ) -> (Global<Governance>, Bucket, Option<Bucket>, Bucket) {
+            staking: Global<Staking>,
+            mother_token_address: ResourceAddress,
+            mother_pool_token_address: ResourceAddress,
+            voting_id_address: ResourceAddress,
+        ) -> Global<Governance> {
             let (address_reservation, component_address) =
                 Runtime::allocate_component_address(Governance::blueprint_id());
 
-            let payment_locker = Blueprint::<AccountLocker>::instantiate(
-                OwnerRole::Fixed(rule!(require_amount(
-                    dec!("0.75"),
-                    controller_badge.resource_address()
-                ))),
-                rule!(
-                    require_amount(dec!("0.75"), controller_badge.resource_address())
-                        || require(global_caller(component_address))
-                ),
-                rule!(
-                    require_amount(dec!("0.75"), controller_badge.resource_address())
-                        || require(global_caller(component_address))
-                ),
-                rule!(
-                    require_amount(dec!("0.75"), controller_badge.resource_address())
-                        || require(global_caller(component_address))
-                ),
-                rule!(
-                    require_amount(dec!("0.75"), controller_badge.resource_address())
-                        || require(global_caller(component_address))
-                ),
-                None,
-            );
+            let reentrancy: Global<ReentrancyProxy> =
+                ReentrancyProxy::new(controller_badge.take(1));
 
-            let mut mother_token_bucket: Bucket = ResourceBuilder::new_fungible(OwnerRole::Fixed(
-                rule!(require(controller_badge.resource_address())),
-            ))
-            .divisibility(DIVISIBILITY_MAXIMUM)
-            .metadata(metadata! (
-                init {
-                    "name" => format!("{} token", protocol_token_symbol), updatable;
-                    "symbol" => format!("{}", protocol_token_symbol), updatable;
-                    "description" => format!("Token tied to the {}", protocol_name), updatable;
-                    "icon_url" => protocol_token_icon_url, updatable; //https://imgur.com/jZMMzUu.png"
-                }
-            ))
-            .mint_roles(mint_roles!(
-                minter => rule!(require_amount(
-                    dec!("0.75"),
-                    controller_badge.resource_address()
-                ));
-                minter_updater => rule!(deny_all);
-            ))
-            .burn_roles(burn_roles!(
-                burner => rule!(allow_all);
-                burner_updater => rule!(deny_all);
-            ))
-            .mint_initial_supply(protocol_token_supply)
-            .into();
-
-            let mother_token_address: ResourceAddress = mother_token_bucket.resource_address();
-            let founder_allocation_amount: Decimal =
-                founder_allocation * mother_token_bucket.amount();
-            let staking_allocation_amount: Decimal =
-                staking_allocation * mother_token_bucket.amount();
-            let bootstrap_allocation_amount: Decimal =
-                bootstrap_allocation * mother_token_bucket.amount();
+            let controller_badge_address: ResourceAddress = controller_badge.resource_address();
 
             let proposal_receipt_manager = ResourceBuilder::new_integer_non_fungible::<
                 ProposalReceipt,
@@ -163,51 +189,12 @@ mod governance {
             ))
             .create_with_no_initial_supply();
 
-            let (bootstrap, non_bucket, bootstrap_badge): (
-                Global<LinearBootstrapPool>,
-                Option<Bucket>,
-                Bucket,
-            ) = LinearBootstrapPool::new(
-                bootstrap_resource1,
-                mother_token_bucket.take(bootstrap_allocation_amount),
-                dec!("0.99"),
-                dec!("0.01"),
-                dec!("0.5"),
-                dec!("0.5"),
-                dec!("0.002"),
-                7,
-            );
-
-            let (staking, voting_id_address): (Global<Staking>, ResourceAddress) = Staking::new(
-                controller_badge.resource_address(),
-                mother_token_bucket
-                    .take(staking_allocation_amount)
-                    .as_fungible(),
-                1,
-                protocol_name,
-                protocol_token_symbol,
-                true,
-                31,
-            );
-
-            controller_badge.authorize_with_all(|| {
-                staking.add_stakable(
-                    mother_token_address, //stakable resource
-                    dec!(0),              //reward amount
-                    dec!("1.0005"),       //lock payment
-                    365,                  //max lock duration
-                    dec!(3),              //unlock multiplier
-                );
-            });
-
             let parameters = GovernanceParameters {
                 fee: dec!(10000),
                 proposal_duration: 1,
                 quorum: dec!(10000),
                 approval_threshold: dec!("0.5"),
             };
-
-            let controller_badge_address: ResourceAddress = controller_badge.resource_address();
 
             let vaults: KeyValueStore<ResourceAddress, Vault> = KeyValueStore::new();
 
@@ -216,47 +203,28 @@ mod governance {
                 Vault::with_bucket(controller_badge),
             );
 
-            let founder_allocation_bucket: Bucket =
-                mother_token_bucket.take(founder_allocation_amount);
-
-            vaults.insert(
-                mother_token_address,
-                Vault::with_bucket(mother_token_bucket),
-            );
-
-            let dao = Self {
-                payment_locker,
+            Self {
                 staking,
-                bootstrap,
                 mother_token_address,
+                mother_pool_token_address,
                 proposal_fee_vault: Vault::new(mother_token_address),
                 vaults,
                 proposal_receipt_manager,
-                payments: KeyValueStore::new(),
                 proposals: KeyValueStore::new(),
-                text_announcements: KeyValueStore::new(),
-                text_announcement_counter: 0,
                 proposal_counter: 0,
                 parameters,
                 voting_id_address,
-                last_staking_update: Clock::current_time_rounded_to_minutes(),
-                daily_update_reward: dec!(10000),
-                proxy: Global::from(proxy_component),
                 controller_badge_address,
-                employees: KeyValueStore::new(),
+                component_address,
+                reentrancy,
             }
             .instantiate()
             .prepare_to_globalize(OwnerRole::Fixed(rule!(require(controller_badge_address))))
             .with_address(address_reservation)
-            .globalize();
-
-            (dao, founder_allocation_bucket, non_bucket, bootstrap_badge)
+            .globalize()
         }
 
-        pub fn finish_bootstrap(&mut self) {
-            self.put_tokens(self.bootstrap.finish_bootstrap());
-        }
-
+        /// Puts tokens into the Governance component (most often badges needed for authenticating proposalsteps)
         pub fn put_tokens(&mut self, tokens: Bucket) {
             if self.vaults.get_mut(&tokens.resource_address()).is_some() {
                 self.vaults
@@ -269,6 +237,7 @@ mod governance {
             };
         }
 
+        /// Sends tokens to a component by calling the put_tokens method on the component.
         pub fn send_tokens(
             &mut self,
             address: ResourceAddress,
@@ -295,181 +264,30 @@ mod governance {
             receiver.call_raw::<()>("put_tokens", scrypto_args!(payment));
         }
 
-        pub fn airdrop_staked_tokens(
-            &mut self,
-            claimants: IndexMap<Global<Account>, Decimal>,
-            address: ResourceAddress,
-            lock_duration: i64,
-        ) {
-            assert!(
-                claimants.len() < 21,
-                "Too many accounts to airdrop to! Try at most 20."
-            );
-            let mut to_airdrop_nfts: Option<Bucket> = None;
-            let mut airdrop_map: IndexMap<Global<Account>, ResourceSpecifier> = IndexMap::new();
-
-            for (receiver, amount) in claimants {
-                let payment: Bucket = self
-                    .vaults
-                    .get_mut(&address)
-                    .unwrap()
-                    .as_fungible()
-                    .take(amount)
-                    .into();
-
-                ////////////////////////////////////////////
-                /// //////////////////////////////////////
-                /// //////////////////////////////////////////
-                /// ORPHANED NODE HERE
-                /// ///////////////////////////////////////
-                let staking_id: Bucket = self.staking.stake(payment, None).unwrap();
-
-                if lock_duration > 0 {
-                    let staking_proof: NonFungibleProof =
-                        staking_id.as_non_fungible().create_proof_of_all();
-                    let locking_reward: FungibleBucket =
-                        self.staking
-                            .lock_stake(address, staking_proof, lock_duration);
-                    self.put_tokens(locking_reward.into());
-                }
-                let mut ids: IndexSet<NonFungibleLocalId> = IndexSet::new();
-                ids.insert(staking_id.as_non_fungible().non_fungible_local_id());
-                airdrop_map.insert(receiver, ResourceSpecifier::NonFungible(ids));
-
-                match &mut to_airdrop_nfts {
-                    Some(bucket) => bucket.put(staking_id),
-                    None => to_airdrop_nfts = Some(staking_id),
-                }
-            }
-            if let Some(to_airdrop_nfts) = to_airdrop_nfts {
-                self.payment_locker
-                    .airdrop(airdrop_map, to_airdrop_nfts, true);
-            }
-        }
-
-        pub fn airdrop_tokens(
-            &mut self,
-            claimants: IndexMap<Global<Account>, ResourceSpecifier>,
-            address: ResourceAddress,
-        ) {
-            assert!(
-                claimants.len() < 31,
-                "Too many accounts to airdrop to! Try at most 30."
-            );
-            let mut to_airdrop_tokens: Option<Bucket> = None;
-
-            for (_receiver, specifier) in &claimants {
-                match specifier {
-                    ResourceSpecifier::Fungible(amount) => {
-                        let payment: Bucket = self
-                            .vaults
-                            .get_mut(&address)
-                            .unwrap()
-                            .as_fungible()
-                            .take(*amount)
-                            .into();
-                        match &mut to_airdrop_tokens {
-                            Some(bucket) => bucket.put(payment),
-                            None => to_airdrop_tokens = Some(payment),
-                        }
-                    }
-                    ResourceSpecifier::NonFungible(ids) => {
-                        let payment: Bucket = self
-                            .vaults
-                            .get_mut(&address)
-                            .unwrap()
-                            .as_non_fungible()
-                            .take_non_fungibles(&ids)
-                            .into();
-                        match &mut to_airdrop_tokens {
-                            Some(bucket) => bucket.put(payment),
-                            None => to_airdrop_tokens = Some(payment),
-                        }
-                    }
-                }
-            }
-            if let Some(to_airdrop_tokens) = to_airdrop_tokens {
-                self.payment_locker
-                    .airdrop(claimants, to_airdrop_tokens, true);
-            }
-        }
-
-        pub fn employ(&mut self, job: Job) {
-            self.employees.insert(
-                job.employee,
-                (job, Clock::current_time_rounded_to_minutes()),
-            );
-        }
-
-        pub fn send_salary_to_employee(&mut self, employee: Global<Account>) {
-            let mut employee_entry = self.employees.get_mut(&employee).unwrap();
-
-            let last_payment: Instant = employee_entry.1;
-            let job_duration: i64 = employee_entry.0.duration;
-            let job_salary_token: ResourceAddress = employee_entry.0.salary_token;
-            let job_salary: Decimal = employee_entry.0.salary;
-
-            let periods_worked: Decimal = ((Clock::current_time_rounded_to_minutes()
-                .seconds_since_unix_epoch
-                - last_payment.seconds_since_unix_epoch)
-                / (Decimal::from(job_duration) * dec!(86400)))
-            .checked_floor()
-            .unwrap();
-            let whole_periods_worked: i64 =
-                i64::try_from(periods_worked.0 / Decimal::ONE.0).unwrap();
-
-            let payment: Bucket = self
-                .vaults
-                .get_mut(&job_salary_token)
-                .unwrap()
-                .as_fungible()
-                .take(job_salary * periods_worked)
-                .into();
-            self.payment_locker.store(employee, payment, true);
-
-            employee_entry.1 = last_payment
-                .add_days(whole_periods_worked * job_duration)
-                .unwrap();
-        }
-
-        pub fn fire(&mut self, employee: Global<Account>, salary_modifier: Option<Decimal>) {
-            self.send_salary_to_employee(employee);
-            let removed_job = self.employees.remove(&employee).unwrap();
-            let payment: Bucket = self
-                .vaults
-                .get_mut(&removed_job.0.salary_token)
-                .unwrap()
-                .as_fungible()
-                .take(removed_job.0.salary * salary_modifier.unwrap_or(dec!(1)))
-                .into();
-
-            self.payment_locker
-                .store(removed_job.0.employee, payment, true);
-        }
-
-        pub fn set_parameters(
-            &mut self,
-            fee: Decimal,
-            proposal_duration: i64,
-            quorum: Decimal,
-            approval_threshold: Decimal,
-        ) {
-            self.parameters.fee = fee;
-            self.parameters.proposal_duration = proposal_duration;
-            self.parameters.quorum = quorum;
-            self.parameters.approval_threshold = approval_threshold;
-        }
-
-        pub fn post_announcement(&mut self, announcement: String) {
-            self.text_announcements
-                .insert(self.text_announcement_counter, announcement);
-            self.text_announcement_counter += 1;
-        }
-
-        pub fn remove_announcement(&mut self, announcement_id: u64) {
-            self.text_announcements.remove(&announcement_id);
-        }
-
+        /// Creates a new proposal.
+        ///
+        /// # Input
+        /// - `title`: Title of the proposal
+        /// - `description`: Description of the proposal
+        /// - `component`: Address of the component to call (in the first step)
+        /// - `badge`: Badge to use for authorization (in the first step)
+        /// - `method`: Method to call on the component (in the first step)
+        /// - `args`: Arguments to pass to the method (in the first step)
+        /// - `return_bucket`: Whether the method returns a bucket
+        /// - `payment`: Payment for the proposal
+        ///
+        /// # Output
+        /// - A bucket with the leftover payment
+        /// - A bucket with the incomplete proposal receipt
+        ///
+        /// # Logic
+        /// - Checks if the payment is correct and more than the fee
+        /// - Puts the fee into the proposal fee vault
+        /// - Creates a new ProposalStep with the given parameters
+        /// - Creates a new Proposal with this ProposalStep
+        /// - Mints a new ProposalReceipt for this proposal
+        /// - Inserts the proposal into the proposals KVS
+        /// - Increments the proposal counter
         pub fn create_proposal(
             &mut self,
             title: String,
@@ -479,6 +297,7 @@ mod governance {
             method: String,
             args: ScryptoValue,
             return_bucket: bool,
+            reentrancy: bool,
             mut payment: Bucket,
         ) -> (Bucket, Bucket) {
             assert!(
@@ -496,6 +315,7 @@ mod governance {
                 method,
                 args,
                 return_bucket,
+                reentrancy,
             };
 
             let proposal = Proposal {
@@ -510,6 +330,7 @@ mod governance {
                     .unwrap(),
                 next_index: 0,
                 status: ProposalStatus::Building,
+                reentrancy: false,
             };
 
             let proposal_receipt = ProposalReceipt {
@@ -530,6 +351,23 @@ mod governance {
             (payment, incomplete_proposal_receipt)
         }
 
+        /// Adds a step to a proposal.
+        ///
+        /// # Input
+        /// - `proposal_receipt_proof`: Proof of the proposal receipt you want to add a step to
+        /// - `component`: Address of the component to call for this step
+        /// - `badge`: Badge to use for authorization for this step
+        /// - `method`: Method to call on the component for this step
+        /// - `args`: Arguments to pass to the method for this step
+        /// - `return_bucket`: Whether the method returns a bucket
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Checks if the proposal receipt is valid
+        /// - Checks whether the proposal is in the building phase
+        /// - Adds a new ProposalStep to the proposal
         pub fn add_proposal_step(
             &mut self,
             proposal_receipt_proof: NonFungibleProof,
@@ -538,6 +376,7 @@ mod governance {
             method: String,
             args: ScryptoValue,
             return_bucket: bool,
+            reentrancy: bool,
         ) {
             let receipt_proof = proposal_receipt_proof.check_with_message(
                 self.proposal_receipt_manager.address(),
@@ -559,11 +398,26 @@ mod governance {
                 method,
                 args,
                 return_bucket,
+                reentrancy,
             };
 
             proposal.steps.push(step);
         }
 
+        /// Submits a proposal.
+        ///
+        /// # Input
+        /// - `proposal_receipt_proof`: Proof of the proposal receipt you want to submit
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Checks if the proposal receipt is valid
+        /// - Checks whether the proposal is in the building phase
+        /// - Updates the proposal status to ongoing
+        /// - Updates the proposal deadline
+        /// - Updates the proposal receipt status to ongoing
         pub fn submit_proposal(&mut self, proposal_receipt_proof: NonFungibleProof) {
             let receipt_proof = proposal_receipt_proof.check_with_message(
                 self.proposal_receipt_manager.address(),
@@ -590,6 +444,24 @@ mod governance {
                 proposal.status,
             );
         }
+
+        /// Votes on a proposal.
+        ///
+        /// # Input
+        /// - `proposal_id`: ID of the proposal to vote on
+        /// - `for_against`: Whether to vote for or against the proposal
+        /// - `voting_id_proof`: Proof of the voting ID to use for voting
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Gets ID from the voting ID proof
+        /// - Checks if the voting period has passed
+        /// - Checks if the user has already voted on this proposal
+        /// - Checks if the proposal is ongoing
+        /// - Calculates vote power
+        /// - Adds the vote to the proposal
 
         pub fn vote_on_proposal(
             &mut self,
@@ -623,8 +495,11 @@ mod governance {
                 .unwrap()
                 .as_fungible()
                 .authorize_with_amount(dec!("0.75"), || {
-                    self.staking
-                        .vote(self.mother_token_address, proposal.deadline, id.clone())
+                    self.staking.vote(
+                        self.mother_pool_token_address,
+                        proposal.deadline,
+                        id.clone(),
+                    )
                 });
 
             if for_against {
@@ -636,7 +511,21 @@ mod governance {
             }
         }
 
-        pub fn finish_voting(&mut self, proposal_id: u64) {
+        /// Finishes voting on a proposal.
+        ///
+        /// # Input
+        /// - `proposal_id`: ID of the proposal to finish voting on
+        /// - `forced_finish`: Whether to force the finish of the voting period (only for testing and will be removed)
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Checks if the proposal is ongoing
+        /// - Checks if the voting period has passed
+        /// - Checks if the proposal has enough votes to be accepted
+        /// - Updates the proposal status (to either Accepted or Rejected)
+        pub fn finish_voting(&mut self, proposal_id: u64, forced_finish: bool) {
             let mut accepted: bool = true;
 
             {
@@ -646,10 +535,15 @@ mod governance {
                     "Proposal not ongoing!"
                 );
 
-                assert!(
-                    Clock::current_time_is_at_or_after(proposal.deadline, TimePrecision::Minute),
-                    "Voting period has not passed!"
-                );
+                if forced_finish == false {
+                    assert!(
+                        Clock::current_time_is_at_or_after(
+                            proposal.deadline,
+                            TimePrecision::Minute
+                        ),
+                        "Voting period has not passed!"
+                    );
+                }
 
                 let total_votes = proposal.votes_for + proposal.votes_against;
 
@@ -680,8 +574,24 @@ mod governance {
             }
         }
 
+        /// Executes a step in a proposal.
+        ///
+        /// # Input
+        /// - `proposal_id`: ID of the proposal to execute the step for
+        /// - `steps_to_execute`: Number of steps to execute
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Checks if the proposal is accepted
+        /// - Checks if the previous step required reentrancy (and whether this has been completed yet)
+        /// - Executes the steps
+        /// - Updates the proposal status to executed if all steps have been executed
+        /// - Handles potentially returned buckets
         pub fn execute_proposal_step(&mut self, proposal_id: u64, steps_to_execute: i64) {
             let mut buckets: Vec<Bucket> = Vec::new();
+            let mut reentrancy_happened = false;
             {
                 let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
                 assert!(
@@ -689,22 +599,43 @@ mod governance {
                     "Proposal not accepted!"
                 );
 
+                assert!(
+                    proposal.reentrancy == false,
+                    "The previous step required reentrancy! Complete this first by calling the ReentrancyProxy component."
+                );
+
                 for _ in 0..steps_to_execute {
                     let step: &ProposalStep = &proposal.steps[proposal.next_index as usize];
                     let component: Global<AnyComponent> = Global::from(step.component);
-                    let badge_vault: FungibleVault =
-                        self.vaults.get_mut(&step.badge).unwrap().as_fungible();
-
-                    if step.return_bucket {
-                        let bucket: Bucket = badge_vault
-                            .authorize_with_amount(dec!("0.75"), || {
-                                component.call::<ScryptoValue, Bucket>(&step.method, &step.args)
-                            });
-                        buckets.push(bucket);
+                    if step.component == self.component_address || step.reentrancy {
+                        reentrancy_happened = true;
+                        self.reentrancy.send_step(
+                            proposal_id,
+                            step.component,
+                            step.method.clone(),
+                            step.args.clone(),
+                        );
+                        break;
                     } else {
-                        badge_vault.authorize_with_amount(dec!("0.75"), || {
-                            component.call::<ScryptoValue, ()>(&step.method, &step.args)
-                        });
+                        if step.return_bucket {
+                            let bucket: Bucket = self
+                                .vaults
+                                .get_mut(&step.badge)
+                                .unwrap()
+                                .as_fungible()
+                                .authorize_with_amount(dec!("0.75"), || {
+                                    component.call::<ScryptoValue, Bucket>(&step.method, &step.args)
+                                });
+                            buckets.push(bucket);
+                        } else {
+                            self.vaults
+                                .get_mut(&step.badge)
+                                .unwrap()
+                                .as_fungible()
+                                .authorize_with_amount(dec!("0.75"), || {
+                                    component.call::<ScryptoValue, ()>(&step.method, &step.args)
+                                });
+                        }
                     }
 
                     proposal.next_index += 1;
@@ -713,7 +644,9 @@ mod governance {
                         break;
                     }
                 }
-                if proposal.next_index as usize == proposal.steps.len() {
+                if reentrancy_happened == true {
+                    proposal.reentrancy = true;
+                } else if proposal.next_index as usize == proposal.steps.len() {
                     proposal.status = ProposalStatus::Executed;
                     self.proposal_receipt_manager.update_non_fungible_data(
                         &NonFungibleLocalId::integer(proposal_id),
@@ -728,6 +661,47 @@ mod governance {
             }
         }
 
+        /// Finishes a reentrancy step in a proposal.
+        ///
+        /// This method is only really called by the ReentrancyProxy after it has executed a step, to update within this component that the reentrancy step has been completed.
+        ///
+        /// # Input
+        /// - `proposal_id`: ID of the proposal to finish the reentrancy step for
+        ///
+        /// # Output
+        /// - None
+        ///
+        /// # Logic
+        /// - Increments the next index of the proposal
+        /// - Updates the proposal status to executed if all steps have been executed
+        /// - Updates the proposal receipt status to executed if all steps have been executed
+        pub fn finish_reentrancy_step(&mut self, proposal_id: u64) {
+            let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
+            proposal.next_index += 1;
+
+            if proposal.next_index as usize == proposal.steps.len() {
+                proposal.status = ProposalStatus::Executed;
+                self.proposal_receipt_manager.update_non_fungible_data(
+                    &NonFungibleLocalId::integer(proposal_id),
+                    "status",
+                    proposal.status,
+                );
+            }
+        }
+
+        /// Retrieves the fee paid for a proposal.
+        ///
+        /// # Input
+        /// - `proposal_receipt_proof`: Proof of the proposal receipt to retrieve the fee for
+        ///
+        /// # Output
+        /// - The bucket with the fee paid
+        ///
+        /// # Logic
+        /// - Checks if the proposal receipt is valid
+        /// - Checks if the proposal is executed
+        /// - Updates the proposal receipt status to finished
+        /// - Returns the fee paid
         pub fn retrieve_fee(&mut self, proposal_receipt_proof: NonFungibleProof) -> Bucket {
             let receipt_proof = proposal_receipt_proof.check_with_message(
                 self.proposal_receipt_manager.address(),
@@ -749,26 +723,7 @@ mod governance {
             self.proposal_fee_vault.take(receipt.fee_paid)
         }
 
-        pub fn rewarded_update(&mut self) -> Bucket {
-            let passed_minutes: Decimal = (Clock::current_time_rounded_to_minutes()
-                .seconds_since_unix_epoch
-                - self.last_staking_update.seconds_since_unix_epoch)
-                / dec!(60);
-
-            self.proxy.call_raw::<()>("update", scrypto_args!());
-            self.staking.update_period();
-            self.last_staking_update = Clock::current_time_rounded_to_minutes();
-
-            self.vaults
-                .get_mut(&self.mother_token_address)
-                .unwrap()
-                .take((passed_minutes * self.daily_update_reward) / (dec!(24) * dec!(60)))
-        }
-
-        pub fn set_proxy_component(&mut self, proxy_component: ComponentAddress) {
-            self.proxy = Global::from(proxy_component);
-        }
-
+        ///Sets the new staking component and voting id address
         pub fn set_staking_component(
             &mut self,
             proxy_component: ComponentAddress,
@@ -778,8 +733,18 @@ mod governance {
             self.voting_id_address = new_voting_id_address;
         }
 
-        pub fn set_update_reward(&mut self, reward: Decimal) {
-            self.daily_update_reward = reward;
+        /// Sets new parameters for the governance component.
+        pub fn set_parameters(
+            &mut self,
+            fee: Decimal,
+            proposal_duration: i64,
+            quorum: Decimal,
+            approval_threshold: Decimal,
+        ) {
+            self.parameters.fee = fee;
+            self.parameters.proposal_duration = proposal_duration;
+            self.parameters.quorum = quorum;
+            self.parameters.approval_threshold = approval_threshold;
         }
     }
 }

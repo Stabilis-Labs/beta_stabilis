@@ -1,0 +1,36 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000");
+
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+    "create_proof_of_non_fungibles"
+    Address("resource_sim1nf0gl2vvjhua2c8kjrtmsd7fkl8hgf3n735lpuqg2elaq90w48de8a") #stab id resource address
+    Array<NonFungibleLocalId>(
+        NonFungibleLocalId("#3#")); #stabid fungible id
+
+POP_FROM_AUTH_ZONE
+    Proof("id_proof");
+	
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") #Primary account 
+    "withdraw"
+    Address("resource_sim1t4rrs0xkyuc7nh3d8uqegk7w05e0ev9y8mhvgzmauwqm4txaj90q0n") # ILIS address
+    Decimal("2000");
+
+TAKE_FROM_WORKTOP 
+    Address("resource_sim1t4rrs0xkyuc7nh3d8uqegk7w05e0ev9y8mhvgzmauwqm4txaj90q0n") # ILIS address
+    Decimal("2000") 
+    Bucket("ilis_bucket");
+
+CALL_METHOD    
+    Address("component_sim1czm2m3e8nmsdsa0s0n2d3ykqqcgksm22yxk97792v2cgrcz6ykd2p6") #proxy comp address
+    "stake_ilis"
+    Bucket("ilis_bucket")
+	Proof("id_proof");
+	
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

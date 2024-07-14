@@ -1,0 +1,30 @@
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd") #Primary account 
+    "withdraw"
+    Address("resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc") # XRD address
+    Decimal("1000");
+
+# Put the XRD from worktop into stab_bucket
+TAKE_FROM_WORKTOP 
+    Address("resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc") # XRD address
+    Decimal("1000") 
+    Bucket("collateral_bucket");
+
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd")
+    "create_proof_of_amount"
+    Address("{control_badge}")
+    Decimal("0.75");
+
+CALL_METHOD    
+    Address("{stab_comp}")
+    "open_cdp"
+    Bucket("collateral_bucket")
+	Decimal("20")
+	true
+;
+
+CALL_METHOD
+    Address("account_tdx_2_12yjctk8r4csusav9c7z9a7j9vahmnnhnht5ym2ffngh9rqyajsgsdd") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

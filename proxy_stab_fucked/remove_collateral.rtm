@@ -1,0 +1,25 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000");
+	
+CALL_METHOD
+	Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+	"create_proof_of_non_fungibles"
+	Address("resource_sim1nfzf2h73frult99zd060vfcml5kncq3mxpthusm9lkglvhsr0guahy") #cdp resource address
+	Array<NonFungibleLocalId>(
+	NonFungibleLocalId("#1#")); #cdp fungible id
+
+POP_FROM_AUTH_ZONE
+    Proof("cdp_proof");
+	
+CALL_METHOD    
+    Address("component_sim1crvqxka5xzny0eey9qtkwnj2cxm3xg76cfl68qk3kr2hdzr2r2ca96") #proxy comp address
+    "remove_collateral"
+	Proof("cdp_proof")
+    Decimal("100");
+	
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma") 
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP");

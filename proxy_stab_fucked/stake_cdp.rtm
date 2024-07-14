@@ -1,0 +1,30 @@
+CALL_METHOD
+    Address("component_sim1cptxxxxxxxxxfaucetxxxxxxxxx000527798379xxxxxxxxxhkrefh")
+    "lock_fee"
+    Decimal("5000");
+
+CALL_METHOD
+    Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+    "create_proof_of_non_fungibles"
+    Address("resource_sim1nf0gl2vvjhua2c8kjrtmsd7fkl8hgf3n735lpuqg2elaq90w48de8a") #stab id resource address
+    Array<NonFungibleLocalId>(
+        NonFungibleLocalId("#7#")); #stabid fungible id
+
+POP_FROM_AUTH_ZONE
+    Proof("id_proof");
+	
+CALL_METHOD
+	Address("account_sim1c956qr3kxlgypxwst89j9yf24tjc7zxd4up38x37zr6q4jxdx9rhma")
+	"create_proof_of_non_fungibles"
+	Address("resource_sim1ngma30k2mxp9n7j3zpw9juuzv9tu557lwlzjj6xhwg5mkapmtvssw3") #cdp resource address
+	Array<NonFungibleLocalId>(
+	NonFungibleLocalId("#8#")); #cdp fungible id
+
+POP_FROM_AUTH_ZONE
+    Proof("cdp_proof");
+
+CALL_METHOD    
+    Address("component_sim1czm2m3e8nmsdsa0s0n2d3ykqqcgksm22yxk97792v2cgrcz6ykd2p6") #proxy comp address
+    "stake_cdp"
+    Proof("id_proof")
+	Proof("cdp_proof");

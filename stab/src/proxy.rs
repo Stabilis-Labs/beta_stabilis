@@ -129,9 +129,6 @@ mod proxy {
             oracle_address: ComponentAddress,
             stabilis_address: ComponentAddress,
         ) -> (Global<Proxy>, Bucket, Option<Bucket>) {
-            let (address_reservation, component_address) =
-                Runtime::allocate_component_address(Proxy::blueprint_id());
-
             let stabilis: Global<Stabilis> = Global::from(stabilis_address);
 
             let controller_address: ResourceAddress = controller_badge.resource_address();
@@ -190,7 +187,6 @@ mod proxy {
             .prepare_to_globalize(OwnerRole::Fixed(rule!(require(
                 controller_address
             ))))
-            .with_address(address_reservation)
             .globalize();
 
             (proxy, lp_tokens, optional_return_bucket)

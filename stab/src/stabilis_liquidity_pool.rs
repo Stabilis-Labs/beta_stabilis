@@ -118,7 +118,7 @@ mod stabilis_liquidity_pool {
             let mut reserves = self.vault_reserves();
 
             let input_reserves = reserves
-                .remove(&input_bucket.resource_address())
+                .swap_remove(&input_bucket.resource_address())
                 .expect("Resource does not belong to the pool");
             let (output_resource_address, output_reserves) = reserves.into_iter().next().unwrap();
 

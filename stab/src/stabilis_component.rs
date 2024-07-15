@@ -396,7 +396,6 @@ mod stabilis_component {
             &mut self,
             collateral: Bucket,
             stab_to_mint: Decimal,
-            safe: bool,
         ) -> (Bucket, Bucket) {
             let mut is_pool_unit_collateral: bool = false;
             let stab_tokens: Bucket = self.stab_manager.mint(stab_to_mint);
@@ -460,27 +459,15 @@ mod stabilis_component {
                 .unwrap()
                 .mcr;
 
-            if safe {
-                assert!(
-                    self.collaterals
-                        .get(&parent_collateral_address)
-                        .unwrap()
-                        .usd_price
-                        * collateral_amount
-                        >= self.internal_stab_price * stab_tokens.amount() * mcr,
-                    "Collateral value too low."
-                );
-            } else {
-                assert!(
-                    self.collaterals
-                        .get(&parent_collateral_address)
-                        .unwrap()
-                        .usd_price
-                        * collateral_amount
-                        >= self.internal_stab_price * stab_tokens.amount() * dec!("0.75"),
-                    "Collateral value too low."
-                );
-            }
+            assert!(
+                self.collaterals
+                    .get(&parent_collateral_address)
+                    .unwrap()
+                    .usd_price
+                    * collateral_amount
+                    >= self.internal_stab_price * stab_tokens.amount() * mcr,
+                "Collateral value too low."
+            );
 
             self.cdp_counter += 1;
 

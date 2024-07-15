@@ -411,10 +411,9 @@ mod proxy {
             &mut self,
             collateral: Bucket,
             stab_to_mint: Decimal,
-            safe: bool,
         ) -> (Bucket, Bucket) {
             self.badge_vault.authorize_with_amount(dec!("0.75"), || {
-                self.stabilis.open_cdp(collateral, stab_to_mint, safe)
+                self.stabilis.open_cdp(collateral, stab_to_mint)
             })
         }
 

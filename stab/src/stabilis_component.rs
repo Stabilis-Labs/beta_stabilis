@@ -128,8 +128,8 @@ mod stabilis_component {
             let parameters = ProtocolParameters {
                 minimum_mint: dec!(1),
                 max_vector_length: 250,
-                liquidation_delay: 5,
-                unmarked_delay: 5,
+                liquidation_delay: 0,
+                unmarked_delay: 0,
                 liquidation_liquidation_fine: dec!("0.10"),
                 stabilis_liquidation_fine: dec!("0.05"),
                 stop_liquidations: false,
@@ -1870,7 +1870,9 @@ mod stabilis_component {
                     marker_data.time_marked.add_minutes(delay).unwrap(),
                     TimePrecision::Minute
                 ),
-                "Not yet able to liquidate."
+                "Not yet able to liquidate, time now: {}, time marked: {}.",
+                Clock::current_time_rounded_to_minutes().seconds_since_unix_epoch,
+                marker_data.time_marked.seconds_since_unix_epoch
             );
 
             assert!(cdp_data.status == CdpStatus::Marked, "Loan not marked");

@@ -56,7 +56,7 @@ fn can_open_cdp() -> Result<(), RuntimeError> {
 
 // Fail to open CDP with insufficient collateral
 #[test]
-fn fail_open_cdp_insufficient_collateral() -> Result<(), RuntimeError> {
+fn cant_open_cdp_insufficient_collateral() -> Result<(), RuntimeError> {
     let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
 
     // Attempt to open CDP with insufficient collateral
@@ -569,4 +569,134 @@ fn correct_liquidation_fines_below_110_cr() -> Result<(), RuntimeError> {
     Ok(())
 }
 
-//remove collateral
+// Force liquidate completely
+/*#[test]
+fn force_liquidate_with_sufficient_collateral() -> Result<(), RuntimeError> {
+    let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
+
+    let (stab, cdp) =
+        stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
+
+    let liquidation_result = stab_comp.force_liquidate(
+        cdp.resource_address(&mut env)?,
+        stab.take(dec!(500), &mut env)?,
+        dec!(1),
+        false,
+        &mut env,
+    );
+
+    assert!(liquidation_result.is_ok());
+    let (returned_collateral, leftover_stab) = liquidation_result.unwrap();
+    assert_eq!(returned_collateral.amount(&mut env)?, dec!(1000));
+    assert_eq!(leftover_stab.amount(&mut env)?, dec!(0));
+
+    Ok(())
+}
+
+// Force liquidate but not fully
+#[test]
+fn fail_force_liquidate_insufficient_collateral() -> Result<(), RuntimeError> {
+    let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
+
+    let (stab, cdp) =
+        stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
+
+    let cdps = cdp.non_fungible_local_ids(&mut env)?;
+    let cdp = cdps.first().unwrap();
+
+    let liquidation_result = stab_comp.force_liquidate(
+        cdp.resource_address(&mut env)?,
+        stab.take(dec!(10), &mut env)?,
+        dec!(1),
+        false,
+        &mut env,
+    );
+
+    assert!(liquidation_result.is_ok());
+    let (returned_collateral, leftover_stab) = liquidation_result.unwrap();
+    assert_eq!(returned_collateral.amount(&mut env)?, dec!(10));
+    assert_eq!(leftover_stab.amount(&mut env)?, dec!(0));
+    assert_eq!(stab.amount(&mut env)?, dec!(490));
+
+    let (close_result) = stab_comp.close_cdp(cdp.clone(), stab.take_all(&mut env)?, &mut env);
+
+    assert!(close_result.is_ok());
+    let (collateral_close, leftover_stab_close) = close_result.unwrap();
+    assert_eq!(collateral_close.amount(&mut env)?, dec!(490));
+    assert_eq!(leftover_stab_close.amount(&mut env)?, dec!(0));
+    
+    Ok(())
+}
+
+// Force mint with valid parameters
+#[test]
+fn force_mint_valid_parameters() -> Result<(), RuntimeError> {
+    let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
+
+    let (stab, cdp) =
+        stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
+
+    let mint_result = stab_comp.force_mint(
+        cdp.resource_address(&mut env)?,
+        a_bucket.take(dec!(100), &mut env)?,
+        dec!(1),
+        &mut env,
+    );
+
+    assert!(mint_result.is_ok());
+    let (minted_stab, leftover_collateral) = mint_result.unwrap();
+    assert_eq!(minted_stab.amount(&mut env)?, dec!(100));
+    assert_eq!(leftover_collateral.is_none(), true);
+
+    Ok(())
+}
+
+// Force mint with excessive collateral
+#[test]
+fn force_mint_excessive_collateral() -> Result<(), RuntimeError> {
+    let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
+
+    let (stab, cdp) =
+        stab_comp.open_cdp(a_bucket.take(dec!(1500), &mut env)?, dec!(500), &mut env)?;
+
+    let mint_result = stab_comp.force_mint(
+        cdp.resource_address(&mut env)?,
+        a_bucket.take(dec!(2000), &mut env)?,
+        dec!(1),
+        &mut env,
+    );
+
+    assert!(mint_result.is_ok());
+    let (minted_stab, leftover_collateral) = mint_result.unwrap();
+    assert_eq!(minted_stab.amount(&mut env)?, dec!(500));
+    assert!(leftover_collateral.is_some());
+
+    let leftover_bucket = leftover_collateral.unwrap();
+    assert_eq!(leftover_bucket.amount(&mut env)?, dec!(1500));
+
+    Ok(())
+}
+
+// Force mint with invalid collateral
+#[test]
+fn fail_force_mint_invalid_collateral() -> Result<(), RuntimeError> {
+    let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
+
+    let (stab, cdp) =
+        stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
+
+    let invalid_collateral = ResourceBuilder::new_fungible(OwnerRole::None)
+        .divisibility(18)
+        .mint_initial_supply(10000, &mut env)?;
+
+    let mint_result = stab_comp.force_mint(
+        invalid_collateral.resource_address(&mut env)?,
+        a_bucket.take(dec!(500), &mut env)?,
+        dec!(1),
+        &mut env,
+    );
+
+    assert!(mint_result.is_err());
+
+    Ok(())
+}*/

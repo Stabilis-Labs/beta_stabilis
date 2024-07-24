@@ -154,8 +154,6 @@ mod staking {
         pub mother_pool: Global<OneResourcePool>,
         ///Vault to put unstaked mother tokens in
         pub unstaked_mother_tokens: Vault,
-        ///Vault to put staked mother tokens in
-        pub staked_mother_tokens: Vault,
         ///Reward for mother token staking
         pub mother_token_reward: Option<Decimal>,
         ///last update
@@ -197,33 +195,10 @@ mod staking {
 
             let mother_token_address: ResourceAddress = rewards.resource_address();
 
-            let mother_token_rep_manager: ResourceManager = ResourceBuilder::new_fungible(OwnerRole::None)
-            .divisibility(DIVISIBILITY_MAXIMUM)
-            .metadata(metadata! (
-                init {
-                    "name" => format!("{} fake token", name), updatable;
-                    "symbol" => format!("fake{}", symbol), updatable;
-                    "description" => format!("A fake {} token, used as a representation in staking.", name), updatable;
-                }
-            ))
-            .mint_roles(mint_roles!(
-                minter => rule!(require(global_caller(component_address)));
-                minter_updater => rule!(deny_all);
-            ))
-            .burn_roles(burn_roles!(
-                burner => rule!(require(global_caller(component_address)));
-                burner_updater => rule!(deny_all);
-            ))
-            .withdraw_roles(withdraw_roles!(
-                withdrawer => rule!(require(global_caller(component_address)));
-                withdrawer_updater => rule!(deny_all);
-            ))
-            .create_with_no_initial_supply();
-
             let mother_pool: Global<OneResourcePool> = Blueprint::<OneResourcePool>::instantiate(
                 OwnerRole::Fixed(rule!(require(controller))),
                 rule!(require(global_caller(component_address))),
-                mother_token_rep_manager.address(),
+                mother_token_address,
                 None,
             );
 
@@ -355,7 +330,6 @@ mod staking {
                 mother_token_rep_manager,
                 mother_pool,
                 unstaked_mother_tokens: Vault::new(mother_token_address),
-                staked_mother_tokens: Vault::new(mother_token_address),
                 mother_token_reward: None,
                 last_update: Clock::current_time_rounded_to_minutes(),
                 pool_token_address,
@@ -421,9 +395,8 @@ mod staking {
                     let seconds_per_period: i64 = self.period_interval * 86400;
                     let reward_fraction: Decimal = reward * Decimal::from(seconds_since_last_update) / Decimal::from(seconds_per_period);
     
-                    if self.reward_vault.amount() > reward_fraction && self.staked_mother_tokens.amount() > dec!(0) {
-                        self.staked_mother_tokens.put(self.reward_vault.take(reward_fraction).into());
-                        self.mother_pool.protected_deposit(self.mother_token_rep_manager.mint(reward_fraction));
+                    if self.reward_vault.amount() > reward_fraction && {
+                        self.mother_pool.protected_deposit(self.reward_vault.take(reward_fraction).into());
                     }
                 }
                 self.last_update = Clock::current_time_rounded_to_minutes();           
@@ -857,11 +830,7 @@ mod staking {
             let necessary_payment = stakable.lock.unlock_multiplier * ((stakable.lock.payment.checked_powi(days_to_unlock).unwrap() * amount_staked) - amount_staked);
             assert!(payment.amount() >= necessary_payment, "Payment is not enough to unlock the tokens.");
             let to_use_tokens: Bucket = payment.take(necessary_payment);
-
-            if self.staked_mother_tokens.amount() > dec!(0) {
-                self.mother_pool.protected_deposit(self.mother_token_rep_manager.mint(to_use_tokens.amount()));
-                self.staked_mother_tokens.put(to_use_tokens);
-            }
+            self.mother_pool.protected_deposit(to_use_tokens);
 
             let new_lock: Instant;
             let min_lock: Instant = Clock::current_time_rounded_to_minutes().add_days(-1).unwrap();
@@ -1076,9 +1045,7 @@ mod staking {
 
         /// This method converts the reward token to an LSU so you don't have to claim rewards manually
         fn make_mother_lsu(&mut self, stake_bucket: Bucket) -> Bucket {
-            let lsus: Bucket = self.mother_pool.contribute(self.mother_token_rep_manager.mint(stake_bucket.amount()));
-            self.staked_mother_tokens.put(stake_bucket);
-            lsus
+            self.mother_pool.contribute(stake_bucket)
         }
 
         /// This method converts the LSU back into a fungible token so you can claim rewards manually
@@ -1088,10 +1055,9 @@ mod staking {
                 .unwrap()
                 .vault
                 .take(amount);
-            let unstaked_mother_token_rep: Bucket = self.mother_pool.redeem(unstake_bucket);
-            let amount = unstaked_mother_token_rep.amount();
-            unstaked_mother_token_rep.burn();
-            self.unstaked_mother_tokens.put(self.staked_mother_tokens.take(amount));
+            let unstaked_mother_token: Bucket = self.mother_pool.redeem(unstake_bucket);
+            let amount = unstaked_mother_token.amount();
+            self.unstaked_mother_tokens.put(unstaked_mother_token);
             amount
         }
     }

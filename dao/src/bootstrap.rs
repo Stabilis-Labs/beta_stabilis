@@ -1,5 +1,5 @@
 //! # Linear Bootstrap Pool Blueprint
-//! 
+//!
 //! Blueprint can be used to create a Balancer style linear bootstrap pool, where the weights of the pool change linearly over time.
 //! This can be used to distribute tokens in a fair way, while only needed a small initial (liquidity) investment.
 
@@ -65,7 +65,7 @@ mod bootstrap {
 
     impl LinearBootstrapPool {
         /// Instantiates a new LinearBootstrapPool component.
-        /// 
+        ///
         /// # Input
         /// - `resource1`: First resource of the pool
         /// - `resource2`: Second resource of the pool
@@ -75,12 +75,12 @@ mod bootstrap {
         /// - `target_weight2`: Target weight of the second resource
         /// - `fee`: Fee to be paid on swaps
         /// - `duration`: Duration of the bootstrap. Amount of days in which the target_weights are reached.
-        /// 
+        ///
         /// # Output
         /// - `Global<LinearBootstrapPool>`: The newly instantiated LinearBootstrapPool component
         /// - `Option<Bucket>`: Empty bucket that can't be dropped (resource created by the pool component)
         /// - `Bucket`: Bucket containing the bootstrap badge
-        /// 
+        ///
         /// # Logic
         /// - Creating a bootstrap badge to reclaim resources after the bootstrap is finished
         /// - Instantiating a TwoResourcePool component with the given resources
@@ -171,14 +171,14 @@ mod bootstrap {
         }
 
         /// Removes liquidity from the pool.
-        /// 
+        ///
         /// # Input
         /// - `pool_units`: Amount of LP tokens to redeem
-        /// 
+        ///
         /// # Output
         /// - `Bucket`: Bucket containing the first resource
         /// - `Bucket`: Bucket containing the second resource
-        /// 
+        ///
         /// # Logic
         /// - Updates the weights of the pool
         /// - Redeems the pool units from the pool component
@@ -188,13 +188,13 @@ mod bootstrap {
         }
 
         /// Swaps one resource for another.
-        /// 
+        ///
         /// # Input
         /// - `input_bucket`: Bucket containing the input resource
-        /// 
+        ///
         /// # Output
         /// - `Bucket`: Bucket containing the output resource
-        /// 
+        ///
         /// # Logic
         /// - Updates the weights of the pool
         /// - Calculates the output amount based on the input amount and the reserves
@@ -206,7 +206,7 @@ mod bootstrap {
             let mut reserves = self.vault_reserves();
 
             let input_reserves = reserves
-                .remove(&input_bucket.resource_address())
+                .swap_remove(&input_bucket.resource_address())
                 .expect("Resource does not belong to the pool");
             let (output_resource_address, output_reserves) = reserves.into_iter().next().unwrap();
 
@@ -232,13 +232,13 @@ mod bootstrap {
         }
 
         /// Returns the price of the first resource in the pool.
-        /// 
+        ///
         /// # Input
         /// - None
-        /// 
+        ///
         /// # Output
         /// - `Decimal`: Price of the first resource
-        /// 
+        ///
         /// # Logic
         /// - Updates the weights of the pool
         /// - Calculates the price of the first resource based on the reserves and the weights
@@ -253,13 +253,13 @@ mod bootstrap {
         }
 
         /// Finishes the bootstrap.
-        /// 
+        ///
         /// # Input
         /// - None
-        /// 
+        ///
         /// # Output
         /// - `Bucket`: Bucket containing the resulting lp tokens
-        /// 
+        ///
         /// # Logic
         /// - Redeems the LP tokens from the pool component
         /// - Checks which resource has the initial_little_amount and puts it in the reclaimable_resource vault
@@ -296,13 +296,13 @@ mod bootstrap {
         }
 
         /// Reclaims the initial resources.
-        /// 
+        ///
         /// # Input
         /// - `boot_badge`: Bucket containing the bootstrap badge
-        /// 
+        ///
         /// # Output
         /// - `Bucket`: Bucket containing the initial resources
-        /// 
+        ///
         /// # Logic
         /// - Checks if the bootstrap badge is correct
         /// - Puts the bootstrap badge in the bootstrap_badge_vault
@@ -328,13 +328,13 @@ mod bootstrap {
         }
 
         /// Returns the progress of the bootstrap.
-        /// 
+        ///
         /// # Input
         /// - None
-        /// 
+        ///
         /// # Output
         /// - `Decimal`: Progress of the bootstrap (0 to 1)
-        /// 
+        ///
         /// # Logic
         /// - Calculates the elapsed time since the start of the bootstrap
         /// - Calculates the time to elapse until the end of the bootstrap

@@ -18,7 +18,7 @@ pub fn publish_and_setup() -> Result<
 
     let (mut stab_comp, controller_badge) = Stabilis::instantiate(package, &mut env)?;
 
-    let mut a_bucket = ResourceBuilder::new_fungible(OwnerRole::None)
+    let a_bucket = ResourceBuilder::new_fungible(OwnerRole::None)
         .divisibility(18)
         .mint_initial_supply(10000, &mut env)?;
 
@@ -310,7 +310,11 @@ fn can_mark_for_liquidation() -> Result<(), RuntimeError> {
     let (_stab, _cdp) =
         stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
 
-    let _ = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(0.5), &mut env);
+    let _ = stab_comp.change_collateral_price(
+        a_bucket.resource_address(&mut env)?,
+        dec!(0.5),
+        &mut env,
+    );
 
     let marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
 
@@ -325,20 +329,29 @@ fn can_liquidate_with_marker() -> Result<(), RuntimeError> {
     let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
 
     let time = env.get_current_time();
-    println!("first time: {:?}",time);
+    println!("first time: {:?}", time);
     let new_time = time.add_days(1).unwrap();
     env.set_current_time(new_time);
-    println!("updated time: {:?}",env.get_current_time());
-    
+    println!("updated time: {:?}", env.get_current_time());
+
     //open loan
     let (stab, _cdp) =
         stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
 
     //get some more free stab to test with
-    let free_stab = BucketFactory::create_fungible_bucket(stab.resource_address(&mut env)?, dec!(100000), Mock, &mut env)?;
+    let free_stab = BucketFactory::create_fungible_bucket(
+        stab.resource_address(&mut env)?,
+        dec!(100000),
+        Mock,
+        &mut env,
+    )?;
 
     //change col price so liq is possible
-    let _ = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(0.5), &mut env);
+    let _ = stab_comp.change_collateral_price(
+        a_bucket.resource_address(&mut env)?,
+        dec!(0.5),
+        &mut env,
+    );
 
     //mark loan
     let marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
@@ -346,8 +359,12 @@ fn can_liquidate_with_marker() -> Result<(), RuntimeError> {
     let marker_id = marker_ids.first().unwrap();
 
     //liq with marker
-    let (collateral_reward, leftover_stab, _liquidation_receipt) =
-        stab_comp.liquidate_position_with_marker(marker_id.clone(), free_stab.take(dec!(600), &mut env)?, &mut env)?;
+    let (collateral_reward, leftover_stab, _liquidation_receipt) = stab_comp
+        .liquidate_position_with_marker(
+            marker_id.clone(),
+            free_stab.take(dec!(600), &mut env)?,
+            &mut env,
+        )?;
 
     //check rewards
     assert_eq!(collateral_reward.amount(&mut env)?, dec!(1000));
@@ -370,17 +387,31 @@ fn can_liquidate_without_marker_by_id() -> Result<(), RuntimeError> {
     let cdp_id = cdps.first().unwrap();
 
     //get some more free stab to test with
-    let free_stab = BucketFactory::create_fungible_bucket(stab.resource_address(&mut env)?, dec!(100000), Mock, &mut env)?;
+    let free_stab = BucketFactory::create_fungible_bucket(
+        stab.resource_address(&mut env)?,
+        dec!(100000),
+        Mock,
+        &mut env,
+    )?;
 
     //change col price so liq is possible
-    let _ = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(0.5), &mut env);
+    let _ = stab_comp.change_collateral_price(
+        a_bucket.resource_address(&mut env)?,
+        dec!(0.5),
+        &mut env,
+    );
 
     //mark loan
     let _marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
 
     //liq without marker
-    let (collateral_reward, leftover_stab, _liquidation_receipt) =
-        stab_comp.liquidate_position_without_marker(free_stab.take(dec!(600), &mut env)?, None, cdp_id.clone(), &mut env)?;
+    let (collateral_reward, leftover_stab, _liquidation_receipt) = stab_comp
+        .liquidate_position_without_marker(
+            free_stab.take(dec!(600), &mut env)?,
+            None,
+            cdp_id.clone(),
+            &mut env,
+        )?;
 
     //check results
     assert_eq!(collateral_reward.amount(&mut env)?, dec!(1000));
@@ -403,17 +434,31 @@ fn can_liquidate_without_marker_automatic() -> Result<(), RuntimeError> {
     let cdp_id = cdps.first().unwrap();
 
     //get some more free stab to test with
-    let free_stab = BucketFactory::create_fungible_bucket(stab.resource_address(&mut env)?, dec!(100000), Mock, &mut env)?;
+    let free_stab = BucketFactory::create_fungible_bucket(
+        stab.resource_address(&mut env)?,
+        dec!(100000),
+        Mock,
+        &mut env,
+    )?;
 
     //change col price so liq is possible
-    let _ = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(0.5), &mut env);
+    let _ = stab_comp.change_collateral_price(
+        a_bucket.resource_address(&mut env)?,
+        dec!(0.5),
+        &mut env,
+    );
 
     //mark loan
     let _marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
 
     //liq without marker
-    let (collateral_reward, leftover_stab, _liquidation_receipt) =
-        stab_comp.liquidate_position_without_marker(free_stab.take(dec!(600), &mut env)?, Some(0), cdp_id.clone(), &mut env)?;
+    let (collateral_reward, leftover_stab, _liquidation_receipt) = stab_comp
+        .liquidate_position_without_marker(
+            free_stab.take(dec!(600), &mut env)?,
+            Some(0),
+            cdp_id.clone(),
+            &mut env,
+        )?;
 
     //check results
     assert_eq!(collateral_reward.amount(&mut env)?, dec!(1000));
@@ -448,11 +493,17 @@ fn correct_liquidation_fines_over_115_cr() -> Result<(), RuntimeError> {
     let cdp_id = cdps.first().unwrap();
 
     //get some more free stab to test with
-    let free_stab = BucketFactory::create_fungible_bucket(stab.resource_address(&mut env)?, dec!(100000), Mock, &mut env)?;
+    let free_stab = BucketFactory::create_fungible_bucket(
+        stab.resource_address(&mut env)?,
+        dec!(100000),
+        Mock,
+        &mut env,
+    )?;
 
     //change col price so liq is possible
     let _stab_price = stab_comp.change_internal_price(dec!(2), &mut env);
-    let _col_price = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(1), &mut env);
+    let _col_price =
+        stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(1), &mut env);
 
     //new cr is 1.25 now, so this means liquidator receives 1.1 / 1.25, stabilis receives 0.05 / 1.25 and 0.1 / 1.25 is left in the cdp
     //collateral is 1000
@@ -462,22 +513,43 @@ fn correct_liquidation_fines_over_115_cr() -> Result<(), RuntimeError> {
     let _marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
 
     //liq without marker
-    let (collateral_reward, _leftover_stab, _liquidation_receipt) =
-        stab_comp.liquidate_position_without_marker(free_stab.take(dec!(500), &mut env)?, Some(0), cdp_id.clone(), &mut env)?;
+    let (collateral_reward, _leftover_stab, _liquidation_receipt) = stab_comp
+        .liquidate_position_without_marker(
+            free_stab.take(dec!(500), &mut env)?,
+            Some(0),
+            cdp_id.clone(),
+            &mut env,
+        )?;
 
     let retrieved_collateral = stab_comp.retrieve_leftover_collateral(cdp_id.clone(), &mut env)?;
     assert!(retrieved_collateral.amount(&mut env)? == dec!(80));
-    assert!(retrieved_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?);
+    assert!(
+        retrieved_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?
+    );
 
     let rewarded_collateral = collateral_reward;
     assert!(rewarded_collateral.amount(&mut env)? == dec!(880));
-    assert!(rewarded_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?);
+    assert!(
+        rewarded_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?
+    );
 
-    let protocol_collateral = stab_comp.empty_collateral_treasury(dec!(40), a_bucket.resource_address(&mut env)?, false, &mut env)?;
+    let protocol_collateral = stab_comp.empty_collateral_treasury(
+        dec!(40),
+        a_bucket.resource_address(&mut env)?,
+        false,
+        &mut env,
+    )?;
     assert!(protocol_collateral.amount(&mut env)? == dec!(40));
-    assert!(protocol_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?);
+    assert!(
+        protocol_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?
+    );
 
-    let impossible_retrieval = stab_comp.empty_collateral_treasury(dec!("0.1"), a_bucket.resource_address(&mut env)?, false, &mut env);
+    let impossible_retrieval = stab_comp.empty_collateral_treasury(
+        dec!("0.1"),
+        a_bucket.resource_address(&mut env)?,
+        false,
+        &mut env,
+    );
     assert!(impossible_retrieval.is_err());
 
     Ok(())
@@ -496,11 +568,17 @@ fn correct_liquidation_fines_between_110_115_cr() -> Result<(), RuntimeError> {
     let cdp_id = cdps.first().unwrap();
 
     //get some more free stab to test with
-    let free_stab = BucketFactory::create_fungible_bucket(stab.resource_address(&mut env)?, dec!(100000), Mock, &mut env)?;
+    let free_stab = BucketFactory::create_fungible_bucket(
+        stab.resource_address(&mut env)?,
+        dec!(100000),
+        Mock,
+        &mut env,
+    )?;
 
     //change col price so liq is possible
     let _stab_price = stab_comp.change_internal_price(dec!(2), &mut env);
-    let _col_price = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(1), &mut env);
+    let _col_price =
+        stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(1), &mut env);
 
     //new cr is 1.125 now, so this means liquidator receives 1.1 / 1.125, stabilis receives 0.025 / 1.125 and 0 is left in the cdp
     //collateral is 4500
@@ -510,8 +588,13 @@ fn correct_liquidation_fines_between_110_115_cr() -> Result<(), RuntimeError> {
     let _marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
 
     //liq without marker
-    let (collateral_reward, _leftover_stab, _liquidation_receipt) =
-        stab_comp.liquidate_position_without_marker(free_stab.take(dec!(2000), &mut env)?, Some(0), cdp_id.clone(), &mut env)?;
+    let (collateral_reward, _leftover_stab, _liquidation_receipt) = stab_comp
+        .liquidate_position_without_marker(
+            free_stab.take(dec!(2000), &mut env)?,
+            Some(0),
+            cdp_id.clone(),
+            &mut env,
+        )?;
 
     //uncommenting this gives an error? not sure why but for sure means there's no leftover collateral so all's good I guess
     /*let retrieved_collateral = stab_comp.retrieve_leftover_collateral(cdp_id.clone(), &mut env);
@@ -519,13 +602,27 @@ fn correct_liquidation_fines_between_110_115_cr() -> Result<(), RuntimeError> {
 
     let rewarded_collateral = collateral_reward;
     assert!(rewarded_collateral.amount(&mut env)? == dec!(4400));
-    assert!(rewarded_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?);
+    assert!(
+        rewarded_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?
+    );
 
-    let protocol_collateral = stab_comp.empty_collateral_treasury(dec!(100), a_bucket.resource_address(&mut env)?, false, &mut env)?;
+    let protocol_collateral = stab_comp.empty_collateral_treasury(
+        dec!(100),
+        a_bucket.resource_address(&mut env)?,
+        false,
+        &mut env,
+    )?;
     assert!(protocol_collateral.amount(&mut env)? == dec!(100));
-    assert!(protocol_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?);
+    assert!(
+        protocol_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?
+    );
 
-    let impossible_retrieval = stab_comp.empty_collateral_treasury(dec!("0.1"), a_bucket.resource_address(&mut env)?, false, &mut env);
+    let impossible_retrieval = stab_comp.empty_collateral_treasury(
+        dec!("0.1"),
+        a_bucket.resource_address(&mut env)?,
+        false,
+        &mut env,
+    );
     assert!(impossible_retrieval.is_err());
 
     Ok(())
@@ -544,11 +641,17 @@ fn correct_liquidation_fines_below_110_cr() -> Result<(), RuntimeError> {
     let cdp_id = cdps.first().unwrap();
 
     //get some more free stab to test with
-    let free_stab = BucketFactory::create_fungible_bucket(stab.resource_address(&mut env)?, dec!(100000), Mock, &mut env)?;
+    let free_stab = BucketFactory::create_fungible_bucket(
+        stab.resource_address(&mut env)?,
+        dec!(100000),
+        Mock,
+        &mut env,
+    )?;
 
     //change col price so liq is possible
     let _stab_price = stab_comp.change_internal_price(dec!(2), &mut env);
-    let _col_price = stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(1), &mut env);
+    let _col_price =
+        stab_comp.change_collateral_price(a_bucket.resource_address(&mut env)?, dec!(1), &mut env);
 
     //new cr is 1.05 now, so this means liquidator receives 1, stabilis receives 0 and 0 is left in the cdp
     //collateral is 2100
@@ -558,8 +661,13 @@ fn correct_liquidation_fines_below_110_cr() -> Result<(), RuntimeError> {
     let _marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
 
     //liq without marker
-    let (collateral_reward, _leftover_stab, _liquidation_receipt) =
-        stab_comp.liquidate_position_without_marker(free_stab.take(dec!(1000), &mut env)?, Some(0), cdp_id.clone(), &mut env)?;
+    let (collateral_reward, _leftover_stab, _liquidation_receipt) = stab_comp
+        .liquidate_position_without_marker(
+            free_stab.take(dec!(1000), &mut env)?,
+            Some(0),
+            cdp_id.clone(),
+            &mut env,
+        )?;
 
     //uncommenting this gives an error? not sure why but for sure means there's no leftover collateral so all's good I guess
     /*let retrieved_collateral = stab_comp.retrieve_leftover_collateral(cdp_id.clone(), &mut env);
@@ -567,9 +675,16 @@ fn correct_liquidation_fines_below_110_cr() -> Result<(), RuntimeError> {
 
     let rewarded_collateral = collateral_reward;
     assert!(rewarded_collateral.amount(&mut env)? == dec!(2100));
-    assert!(rewarded_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?);
+    assert!(
+        rewarded_collateral.resource_address(&mut env)? == a_bucket.resource_address(&mut env)?
+    );
 
-    let impossible_retrieval = stab_comp.empty_collateral_treasury(dec!("0.1"), a_bucket.resource_address(&mut env)?, false, &mut env);
+    let impossible_retrieval = stab_comp.empty_collateral_treasury(
+        dec!("0.1"),
+        a_bucket.resource_address(&mut env)?,
+        false,
+        &mut env,
+    );
     assert!(impossible_retrieval.is_err());
 
     Ok(())
@@ -630,7 +745,7 @@ fn force_liquidate_partly() -> Result<(), RuntimeError> {
     let (collateral_close, leftover_stab_close) = close_result.unwrap();
     assert_eq!(collateral_close.amount(&mut env)?, dec!(990));
     assert_eq!(leftover_stab_close.amount(&mut env)?, dec!(0));
-    
+
     Ok(())
 }
 

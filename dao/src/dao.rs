@@ -414,7 +414,9 @@ mod dao {
                     .take(amount)
                     .into();
 
-                let staking_id: Bucket = self.staking.stake(payment, None).unwrap();
+                let (id_option, _empty_bucket): (Option<Bucket>, Option<Bucket>) =
+                    self.staking.stake(payment, None);
+                let staking_id: Bucket = id_option.unwrap();
 
                 if lock_duration > 0 {
                     let staking_proof: NonFungibleProof =

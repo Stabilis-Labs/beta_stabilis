@@ -148,8 +148,6 @@ mod staking {
         pub reward_vault: FungibleVault,
         // keyvaluestore, holding stakable units and their data
         pub stakes: HashMap<ResourceAddress, StakableUnit>,
-        ///fake mother token
-        pub mother_token_rep_manager: ResourceManager,
         ///lsu pool for reward token
         pub mother_pool: Global<OneResourcePool>,
         ///Vault to put unstaked mother tokens in
@@ -327,7 +325,6 @@ mod staking {
                 id_counter: 0,
                 reward_vault: FungibleVault::with_bucket(rewards),
                 stakes,
-                mother_token_rep_manager,
                 mother_pool,
                 unstaked_mother_tokens: Vault::new(mother_token_address),
                 mother_token_reward: None,
@@ -395,7 +392,7 @@ mod staking {
                     let seconds_per_period: i64 = self.period_interval * 86400;
                     let reward_fraction: Decimal = reward * Decimal::from(seconds_since_last_update) / Decimal::from(seconds_per_period);
     
-                    if self.reward_vault.amount() > reward_fraction && {
+                    if self.reward_vault.amount() > reward_fraction {
                         self.mother_pool.protected_deposit(self.reward_vault.take(reward_fraction).into());
                     }
                 }

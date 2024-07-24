@@ -332,8 +332,7 @@ mod governance {
                     .add_minutes(self.parameters.proposal_duration * 24 * 60)
                     .unwrap(),
                 next_index: 0,
-                in_last_day: false,
-                entering_last_day_at: None,
+                entered_last_day_at: None,
                 status: ProposalStatus::Building,
                 reentrancy: false,
             };

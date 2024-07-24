@@ -1,5 +1,5 @@
 //! # The STAB component Blueprint
-//!
+//! 
 //! This module contains the Stabilis component, which is a smart contract that allows users to open, close, top up and liquidate loans of STAB tokens.
 //! The STAB token is a stablecoin that is pegged to its own internal price, which is determined by an interest rate (meaning, this internal price is variable!).
 //!
@@ -128,8 +128,8 @@ mod stabilis_component {
             let parameters = ProtocolParameters {
                 minimum_mint: dec!(1),
                 max_vector_length: 250,
-                liquidation_delay: 0,
-                unmarked_delay: 0,
+                liquidation_delay: 5,
+                unmarked_delay: 5,
                 liquidation_liquidation_fine: dec!("0.10"),
                 stabilis_liquidation_fine: dec!("0.05"),
                 stop_liquidations: false,
@@ -392,7 +392,11 @@ mod stabilis_component {
         /// - Mint the CDP receipt
         /// - Store the collateral in the correct vault
         /// - Return the minted STAB and the CDP receipt
-        pub fn open_cdp(&mut self, collateral: Bucket, stab_to_mint: Decimal) -> (Bucket, Bucket) {
+        pub fn open_cdp(
+            &mut self,
+            collateral: Bucket,
+            stab_to_mint: Decimal,
+        ) -> (Bucket, Bucket) {
             let mut is_pool_unit_collateral: bool = false;
             let stab_tokens: Bucket = self.stab_manager.mint(stab_to_mint);
 
@@ -848,11 +852,7 @@ mod stabilis_component {
         /// - Insert new collateral ratio into AvlTree
         /// - Check if the new collateral ratio is high enough
         /// - Update the CDP receipt
-        pub fn partial_close_cdp(
-            &mut self,
-            collateral_id: NonFungibleLocalId,
-            repayment: Bucket,
-        ) -> (Option<Bucket>, Option<Bucket>) {
+        pub fn partial_close_cdp(&mut self, collateral_id: NonFungibleLocalId, repayment: Bucket) -> (Option<Bucket>, Option<Bucket>) {
             assert!(
                 repayment.resource_address() == self.stab_manager.address(),
                 "Invalid STAB payment."
@@ -861,8 +861,7 @@ mod stabilis_component {
             let new_stab_amount = receipt_data.minted_stab - repayment.amount();
 
             if new_stab_amount < dec!(0) {
-                let (collateral, leftover_payment): (Bucket, Bucket) =
-                    self.close_cdp(collateral_id, repayment);
+                let (collateral, leftover_payment): (Bucket, Bucket) = self.close_cdp(collateral_id, repayment);
                 return (Some(collateral), Some(leftover_payment));
             }
 
@@ -1750,7 +1749,7 @@ mod stabilis_component {
         }
 
         /// Set fines for being liquidated (for liquidators and the protocol)
-        ///   - a liquidator fine of 0.05 and protocol fine of 0.03 would mean a liquidation would result in 1 + 0.05 + 0.03 = 1.08 times the minted STAB's value collateral being taken from the borrower.
+        ///   - a liquidator fine of 0.05 and protocol fine of 0.03 would mean a liquidation would result in 1 + 0.05 + 0.03 = 1.08 times the minted STAB's value collateral being taken from the borrower. 
         pub fn set_fines(&mut self, liquidator_fine: Decimal, stabilis_fine: Decimal) {
             self.parameters.liquidation_liquidation_fine = liquidator_fine;
             self.parameters.stabilis_liquidation_fine = stabilis_fine;
@@ -2378,6 +2377,7 @@ mod stabilis_component {
 #[derive(ScryptoSbor)]
 /// All info about a collateral used by the protocol
 pub struct CollateralInfo {
+
     pub mcr: Decimal,
     pub usd_price: Decimal,
     pub liquidation_collateral_ratio: Decimal,

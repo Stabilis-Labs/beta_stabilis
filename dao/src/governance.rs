@@ -22,6 +22,7 @@ pub struct Proposal {
     pub votes_against: Decimal,
     pub votes: KeyValueStore<NonFungibleLocalId, Decimal>,
     pub deadline: Instant,
+    pub entered_last_day_at: Option<Decimal>,
     pub next_index: i64,
     pub status: ProposalStatus,
     pub reentrancy: bool,
@@ -68,6 +69,7 @@ pub struct GovernanceParameters {
     pub proposal_duration: i64,
     pub quorum: Decimal,
     pub approval_threshold: Decimal,
+    pub max_last_day_vote_share: Decimal,
 }
 
 #[blueprint]
@@ -194,6 +196,7 @@ mod governance {
                 proposal_duration: 1,
                 quorum: dec!(10000),
                 approval_threshold: dec!("0.5"),
+                max_last_day_vote_share: dec!("0.1"),
             };
 
             let vaults: KeyValueStore<ResourceAddress, Vault> = KeyValueStore::new();
@@ -329,6 +332,8 @@ mod governance {
                     .add_minutes(self.parameters.proposal_duration * 24 * 60)
                     .unwrap(),
                 next_index: 0,
+                in_last_day: false,
+                entering_last_day_at: None,
                 status: ProposalStatus::Building,
                 reentrancy: false,
             };
@@ -459,6 +464,7 @@ mod governance {
         /// - Gets ID from the voting ID proof
         /// - Checks if the voting period has passed
         /// - Checks if the user has already voted on this proposal
+        ///    - if so, checks if the user is changing their vote, which isn't allowed
         /// - Checks if the proposal is ongoing
         /// - Calculates vote power
         /// - Adds the vote to the proposal
@@ -471,6 +477,14 @@ mod governance {
         ) {
             let mut proposal = self.proposals.get_mut(&proposal_id).unwrap();
 
+            if Clock::current_time_is_at_or_after(
+                proposal.deadline.add_days(-1).unwrap(),
+                TimePrecision::Minute,
+            ) && proposal.entered_last_day_at.is_none()
+            {
+                proposal.entered_last_day_at = Some(proposal.votes_for + proposal.votes_against);
+            }
+
             let id_proof = voting_id_proof
                 .check_with_message(self.voting_id_address, "Invalid staking ID supplied!");
             let id: NonFungibleLocalId = id_proof.as_non_fungible().non_fungible_local_id();
@@ -480,14 +494,23 @@ mod governance {
                 "Voting period has passed!"
             );
             assert!(
-                proposal.votes.get(&id).is_none(),
-                "Already voted on this proposal!"
-            );
-
-            assert!(
                 proposal.status == ProposalStatus::Ongoing,
                 "Proposal not ongoing!"
             );
+
+            if let Some(vote) = proposal.votes.get(&id) {
+                if for_against {
+                    assert!(
+                        *vote >= dec!(0),
+                        "Already voted on this proposal, can only update vote, not change it!"
+                    );
+                } else {
+                    assert!(
+                        *vote <= dec!(0),
+                        "Already voted on this proposal, can only update vote, not change it!"
+                    );
+                }
+            }
 
             let vote_power: Decimal = self
                 .vaults
@@ -508,6 +531,16 @@ mod governance {
             } else {
                 proposal.votes.insert(id.clone(), dec!("-1") * vote_power);
                 proposal.votes_against += vote_power;
+            }
+
+            if let Some(entered_last_day_at) = proposal.entered_last_day_at {
+                let total_votes = proposal.votes_for + proposal.votes_against;
+                if total_votes - entered_last_day_at
+                    > entered_last_day_at * self.parameters.max_last_day_vote_share
+                {
+                    proposal.deadline = proposal.deadline.add_days(1).unwrap();
+                    proposal.entered_last_day_at = None;
+                }
             }
         }
 
@@ -740,11 +773,13 @@ mod governance {
             proposal_duration: i64,
             quorum: Decimal,
             approval_threshold: Decimal,
+            max_last_day_vote_share: Decimal,
         ) {
             self.parameters.fee = fee;
             self.parameters.proposal_duration = proposal_duration;
             self.parameters.quorum = quorum;
             self.parameters.approval_threshold = approval_threshold;
+            self.parameters.max_last_day_vote_share = max_last_day_vote_share;
         }
     }
 }

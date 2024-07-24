@@ -324,12 +324,6 @@ fn can_mark_for_liquidation() -> Result<(), RuntimeError> {
 fn can_liquidate_with_marker() -> Result<(), RuntimeError> {
     let (mut env, mut stab_comp, a_bucket, _control_bucket) = publish_and_setup()?;
 
-    let time = env.get_current_time();
-    println!("first time: {:?}",time);
-    let new_time = time.add_days(1).unwrap();
-    env.set_current_time(new_time);
-    println!("updated time: {:?}",env.get_current_time());
-    
     //open loan
     let (stab, _cdp) =
         stab_comp.open_cdp(a_bucket.take(dec!(1000), &mut env)?, dec!(500), &mut env)?;
@@ -344,6 +338,12 @@ fn can_liquidate_with_marker() -> Result<(), RuntimeError> {
     let marker = stab_comp.mark_for_liquidation(a_bucket.resource_address(&mut env)?, &mut env)?;
     let marker_ids = marker.non_fungible_local_ids(&mut env)?;
     let marker_id = marker_ids.first().unwrap();
+
+    let time = env.get_current_time();
+    println!("first time: {:?}",time);
+    let new_time = time.add_minutes(5).unwrap();
+    env.set_current_time(new_time);
+    println!("updated time: {:?}",env.get_current_time());
 
     //liq with marker
     let (collateral_reward, leftover_stab, _liquidation_receipt) =

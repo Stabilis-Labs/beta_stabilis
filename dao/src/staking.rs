@@ -630,10 +630,12 @@ mod staking {
         /// - the method checks whether it received tokens or a transfer receipt
         ///     - if received tokens are mother tokens, they are converted to mother pool tokens
         /// - the method adds tokens to an internal vault, or burns the transfer receipt
+        /// - if the staked tokens are locked, the method calculates the lock reward and returns it
         /// - the method updates the staking ID
-        pub fn stake(&mut self, mut stake_bucket: Bucket, id_proof: Option<Proof>) -> Option<Bucket> {
+        pub fn stake(&mut self, mut stake_bucket: Bucket, id_proof: Option<Proof>) -> (Option<Bucket>, Option<Bucket>) {
             let id: NonFungibleLocalId;
             let mut id_bucket: Option<Bucket> = None;
+            let mut lock_reward_bucket: Option<Bucket> = None;
 
             if let Some(id_proof) = id_proof {
                 let id_proof =
@@ -675,6 +677,18 @@ mod staking {
                     voting_until: None,
                 });
 
+            if let Some(locked_until) = resource_map
+                .get(&address)
+                .expect("Stakable not found in staking ID.")
+                .locked_until {
+                let stakable = self.stakes.get(&address).unwrap();
+                let seconds_to_unlock = locked_until.seconds_since_unix_epoch - Clock::current_time_rounded_to_minutes().seconds_since_unix_epoch;
+                let seconds_to_unlock_dec = Decimal::from(seconds_to_unlock);
+                let full_days_to_unlock = (seconds_to_unlock_dec / dec!(86400)).checked_floor().unwrap();
+                let whole_days_to_unlock: i64 = i64::try_from(full_days_to_unlock.0 / Decimal::ONE.0).unwrap();
+                lock_reward_bucket = Some(self.reward_vault.take((stakable.lock.payment.checked_powi(whole_days_to_unlock).unwrap() * stake_amount) - stake_amount).into());
+            }
+
             self.id_manager
                 .update_non_fungible_data(&id, "resources", resource_map);
 
@@ -685,7 +699,8 @@ mod staking {
                 "next_period",
                 self.current_period + 1,
             );
-            id_bucket
+
+            (id_bucket, lock_reward_bucket)
         }
 
         /// This method claims rewards from a staking ID

@@ -1,5 +1,5 @@
 //! # DAO Blueprint
-//! 
+//!
 //! The DAO blueprint is the main component of the DAO, holding all the information about the DAO, its employees, and its announcements.
 //! It can be used to hire / fire employees. Airdrop (staked) tokens, send tokens, post / remove announcements, and some more.
 
@@ -75,7 +75,7 @@ mod dao {
 
     impl Dao {
         /// Instantiates a new DAO component.
-        /// 
+        ///
         /// # Input
         /// - `founder_allocation`: Percentage of the total supply to allocate to the founder.
         /// - `bootstrap_allocation`: Percentage of the total supply to allocate to the bootstrap pool.
@@ -88,13 +88,13 @@ mod dao {
         /// - `protocol_token_icon_url`: Icon URL of the protocol token.
         /// - `proposal_receipt_icon_url`: Icon URL of the proposal receipt.
         /// - `bootstrap_resource1`: Resource for the bootstrap pool.
-        /// 
+        ///
         /// # Output
         /// - The DAO component
         /// - the founder allocation bucket
         /// - a bucket that can't be dropped but will be empty
         /// - the bootstrap badge bucket used to reclaim initial bootstrap funds.
-        /// 
+        ///
         /// # Logic
         /// - Instantiate an AccountLocker
         /// - Mint DAO governance tokens (referred to as mother tokens)
@@ -197,7 +197,11 @@ mod dao {
                 oci_dapp_definition,
             );
 
-            let (staking, voting_id_address, pool_token_address): (Global<Staking>, ResourceAddress, ResourceAddress) = Staking::new(
+            let (staking, voting_id_address, pool_token_address): (
+                Global<Staking>,
+                ResourceAddress,
+                ResourceAddress,
+            ) = Staking::new(
                 controller_badge.resource_address(),
                 mother_token_bucket
                     .take(staking_allocation_amount)
@@ -265,19 +269,23 @@ mod dao {
 
         /// Finishes the bootstrap and stores the resulting LP-tokens to the DAO treasury
         pub fn finish_bootstrap(&mut self) {
-            let tokens: Bucket = self.vaults.get_mut(&self.controller_badge_address).unwrap().as_fungible().authorize_with_amount(dec!(1), || self.bootstrap.finish_bootstrap());
+            let tokens: Bucket = self
+                .vaults
+                .get_mut(&self.controller_badge_address)
+                .unwrap()
+                .as_fungible()
+                .authorize_with_amount(dec!(1), || self.bootstrap.finish_bootstrap());
             self.put_tokens(tokens)
-                
         }
 
         /// Puts tokens into the DAO treasury
-        /// 
+        ///
         /// # Input
         /// - `tokens`: Tokens to put into the treasury
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - If the resource address of the tokens is already in the vaults, put the tokens into the vault
         /// - Otherwise, create a new vault with the tokens and store it
@@ -294,15 +302,15 @@ mod dao {
         }
 
         /// Sends tokens from the DAO treasury to a receiver
-        /// 
+        ///
         /// # Input
         /// - `address`: Address of the tokens to send
         /// - `tokens`: Tokens to send
         /// - `receiver_address`: Component address to send tokens to
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - Take the tokens from the vault
         /// - Send the tokens to the receiver using the `put_tokens` method of the receiver component
@@ -337,7 +345,7 @@ mod dao {
         /// # Input
         /// - `address`: Address of the tokens to take
         /// - `tokens`: Tokens to take
-        /// 
+        ///
         /// # Output
         /// - The tokens taken
         ///
@@ -369,15 +377,15 @@ mod dao {
         }
 
         /// Staking tokens to receive a Staking ID through the Staking component, and then airdropping them using the Payment Locker
-        /// 
+        ///
         /// # Input
         /// - `claimants`: Claimants and the amount of tokens to airdrop to them
         /// - `address`: Address of the tokens to airdrop
         /// - `lock_duration`: Duration to lock the tokens for
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - Assert that there are less than 21 claimants as airdropping too many at a time fails
         /// - Create a bucket to store the NFTs to airdrop
@@ -432,14 +440,14 @@ mod dao {
         }
 
         /// Airdropping tokens through the Payment Locker
-        /// 
+        ///
         /// # Input
         /// - `claimants`: Claimants and amount/id of tokens to airdrop to them
         /// - `address`: Address of the tokens to airdrop
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - Assert that there are less than 31 claimants as airdropping too many at a time fails
         /// - Create a bucket to store the tokens to airdrop
@@ -493,13 +501,13 @@ mod dao {
         }
 
         /// Employ a new employee
-        /// 
+        ///
         /// # Input
         /// - `job`: Job to employ the employee for
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - Insert the employee and their job into the employees KVS
         pub fn employ(&mut self, job: Job) {
@@ -510,13 +518,13 @@ mod dao {
         }
 
         /// Send salary to an employee
-        /// 
+        ///
         /// # Input
         /// - `employee`: Employee to send the salary to
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - Get the employee from the employees KVS
         /// - Calculate the periods worked by the employee
@@ -554,14 +562,14 @@ mod dao {
         }
 
         /// Fire an employee
-        /// 
+        ///
         /// # Input
         /// - `employee`: Employee to fire
         /// - `salary_modifier`: Modifier for the firing 'bonus'
-        /// 
+        ///
         /// # Output
         /// - None
-        /// 
+        ///
         /// # Logic
         /// - Send unclaimed salaries to employee
         /// - Remove the employee from the employees KVS
@@ -595,13 +603,13 @@ mod dao {
         }
 
         /// Call the rewarded methods
-        /// 
+        ///
         /// # Input
         /// - None
-        /// 
+        ///
         /// # Output
         /// - The amount of tokens rewarded
-        /// 
+        ///
         /// # Logic
         /// - Calculate the time passed since the last update
         /// - Call all rewarded methods
@@ -638,10 +646,7 @@ mod dao {
         }
 
         /// Set the staking component
-        pub fn set_staking_component(
-            &mut self,
-            staking_component: ComponentAddress,
-        ) {
+        pub fn set_staking_component(&mut self, staking_component: ComponentAddress) {
             self.staking = staking_component.into();
         }
 
@@ -652,11 +657,7 @@ mod dao {
 
         /// Get the amount of tokens in possession of the DAO
         pub fn get_token_amount(&self, address: ResourceAddress) -> Decimal {
-            self.vaults
-                .get(&address)
-                .unwrap()
-                .as_fungible()
-                .amount()
+            self.vaults.get(&address).unwrap().as_fungible().amount()
         }
     }
 }
